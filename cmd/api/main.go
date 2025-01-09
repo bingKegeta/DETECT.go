@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"DETECT.go/internal/auth"
 	"DETECT.go/internal/server"
 )
 
@@ -38,6 +39,7 @@ func gracefulShutdown(apiServer *http.Server, done chan bool) {
 
 func main() {
 
+	auth.NewAuth()
 	server := server.NewServer()
 
 	// Create a done channel to signal when the shutdown is complete
