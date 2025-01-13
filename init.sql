@@ -3,7 +3,6 @@ CREATE TABLE Users (
     email VARCHAR(255) NOT NULL UNIQUE,
     password VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     oauth_provider VARCHAR(50),
     oauth_provider_id VARCHAR(255),
     oauth_token VARCHAR(255),

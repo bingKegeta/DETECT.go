@@ -6,7 +6,7 @@ services:
       target: prod
     restart: unless-stopped
     ports:
-      - ${PORT}:${PORT}
+      - "${PORT}:${PORT}"
     environment:
       APP_ENV: ${APP_ENV}
       PORT: ${PORT}
@@ -28,14 +28,13 @@ services:
       POSTGRES_DB: ${DB_DATABASE}
       POSTGRES_USER: ${DB_USERNAME}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_INITDB_ARGS: "--username=${DB_USERNAME} --dbname=${DB_DATABASE}"
     ports:
       - "${DB_PORT}:5432"
     volumes:
       - psql_volume_bp:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "sh -c 'pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}'"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
       interval: 5s
       timeout: 5s
       retries: 3
