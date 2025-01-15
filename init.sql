@@ -1,4 +1,4 @@
-CREATE TABLE Users (
+CREATE TABLE IF NOT EXISTS Users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
     password VARCHAR(255),
@@ -13,5 +13,5 @@ CREATE TABLE Users (
         )
 );
 
-CREATE INDEX idx_users_email ON Users(email);
-CREATE INDEX idx_users_oauth_provider_id ON Users(oauth_provider, oauth_provider_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON Users(email);
+CREATE INDEX IF NOT EXISTS idx_users_oauth_provider_id ON Users(oauth_provider, oauth_provider_id);
