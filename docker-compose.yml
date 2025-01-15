@@ -1,5 +1,7 @@
 services:
   app:
+    env_file:
+      - ./.env
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,7 +12,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV}
       PORT: ${PORT}
-      DB_HOST: ${DB_HOST}
+      DB_HOST: psql_bp
       DB_PORT: ${DB_PORT}
       DB_DATABASE: ${DB_DATABASE}
       DB_USERNAME: ${DB_USERNAME}
@@ -21,6 +23,7 @@ services:
         condition: service_healthy
     networks:
       - comm_channel
+
   psql_bp:
     image: postgres:latest
     restart: unless-stopped
@@ -28,21 +31,16 @@ services:
       POSTGRES_DB: ${DB_DATABASE}
       POSTGRES_USER: ${DB_USERNAME}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-    ports:
-      - "${DB_PORT}:5432"
     volumes:
-      - psql_volume_bp:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 15s
+      retries: 5
     networks:
       - comm_channel
 
-volumes:
-  psql_volume_bp:
 networks:
   comm_channel:
+    driver: bridge
