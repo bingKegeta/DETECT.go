@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"DETECT.go/internal/database"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -16,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/markbates/goth/gothic"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func (s *Server) RegisterRoutes() http.Handler {
@@ -36,11 +38,17 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	r.Get("/websocket", s.websocketHandler)
 
+	r.Post("/login", s.handleLogin)
+
+	r.Post("/register", s.handleRegister)
+
 	r.Get("/auth/{provider}", s.startAuth)
 
 	r.Get("/auth/{provider}/callback", s.getAuthCallback)
 
 	r.Get("/logout", s.logout)
+
+	r.Get("/users", handleGetUsers)
 
 	return r
 }
@@ -147,4 +155,119 @@ func (s *Server) websocketHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		time.Sleep(time.Second * 2)
 	}
+}
+
+// handleRegister handles the registration of a user.
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	// Parse JSON body
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON data", http.StatusBadRequest)
+		return
+	}
+
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "Email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	dbService := database.New()
+
+	exists, err := dbService.UserExists(req.Email)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	if exists {
+		http.Error(w, "User already exists", http.StatusConflict)
+		return
+	}
+
+	// Hash the password using bcrypt
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	// Insert new user with hashed password
+	userID, err := dbService.InsertUser(req.Email, string(hashedPassword))
+	if err != nil {
+		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(fmt.Sprintf("User created with ID: %d", userID)))
+}
+
+// handleGetUsers handles the retrieval of all registered users.
+func handleGetUsers(w http.ResponseWriter, r *http.Request) {
+    // Initialize database service
+    dbService := database.New()
+
+    // Get all users
+    users, err := dbService.GetAllUsers()
+    if err != nil {
+        http.Error(w, "Database error", http.StatusInternalServerError)
+        return
+    }
+
+    // Convert users map to JSON
+    usersJSON, err := json.Marshal(users)
+    if err != nil {
+        http.Error(w, "Failed to encode users to JSON", http.StatusInternalServerError)
+        return
+    }
+
+    // Return JSON response
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusOK)
+    w.Write(usersJSON)
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+    // Parse request body
+    var req struct {
+        Email    string `json:"email"`
+        Password string `json:"password"` 
+    }
+
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        return
+    }
+
+	dbService := database.New()
+
+	exists, err := dbService.UserExists(req.Email)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	if !exists {
+		http.Error(w, "User does not exist", http.StatusNotFound)
+		return
+	}
+
+	// Verify the password using bcrypt
+	storedHashedPassword, err := dbService.GetUserPassword(req.Email)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(storedHashedPassword), []byte(req.Password))
+	if err != nil {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Login successful"))
 }
