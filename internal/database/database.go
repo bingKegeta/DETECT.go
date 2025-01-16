@@ -22,6 +22,21 @@ type Service interface {
 	// Close terminates the database connection.
 	// It returns an error if the connection cannot be closed.
 	Close() error
+
+	// UserExists checks if a user exists by username.
+	UserExists(username string) (bool, error)
+
+	// InsertUser inserts a new user into the database.
+	InsertUser(username, password string) (int, error)
+
+	// GetAllUsers returns the IDs and emails of all registered users.
+	GetAllUsers() (map[int]string, error)
+
+	// VerifyUser verifies a user's credentials.
+	VerifyUser(email, password string) (bool, error)
+
+	// GetUserPassword retrieves the hashed password for a given email.
+	GetUserPassword(email string) (string, error)
 }
 
 type service struct {
@@ -29,12 +44,12 @@ type service struct {
 }
 
 var (
-	database   = os.Getenv("BLUEPRINT_DB_DATABASE")
-	password   = os.Getenv("BLUEPRINT_DB_PASSWORD")
-	username   = os.Getenv("BLUEPRINT_DB_USERNAME")
-	port       = os.Getenv("BLUEPRINT_DB_PORT")
-	host       = os.Getenv("BLUEPRINT_DB_HOST")
-	schema     = os.Getenv("BLUEPRINT_DB_SCHEMA")
+	database   = os.Getenv("DB_DATABASE")
+	password   = os.Getenv("DB_PASSWORD")
+	username   = os.Getenv("DB_USERNAME")
+	port       = os.Getenv("DB_PORT")
+	host       = os.Getenv("DB_HOST")
+	schema     = os.Getenv("DB_SCHEMA")
 	dbInstance *service
 )
 
@@ -43,11 +58,19 @@ func New() Service {
 	if dbInstance != nil {
 		return dbInstance
 	}
+
 	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s", username, password, host, port, database, schema)
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
-		log.Fatal(err)
-	}
+        log.Fatalf("Failed to connect to database: %v", err)
+    }
+
+	// Ping the database to ensure the connection is established
+    err = db.Ping()
+    if err != nil {
+        log.Fatalf("Failed to ping database: %v", err)
+    }
+
 	dbInstance = &service{
 		db: db,
 	}
@@ -112,4 +135,76 @@ func (s *service) Health() map[string]string {
 func (s *service) Close() error {
 	log.Printf("Disconnected from database: %s", database)
 	return s.db.Close()
+}
+
+// Check if a user exists by email
+func (s *service) UserExists(email string) (bool, error) {
+    var exists bool
+    query := "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)"
+    err := s.db.QueryRow(query, email).Scan(&exists)
+    if err != nil {
+        return false, err
+    }
+    return exists, nil
+}
+
+// Insert a new user into the database
+func (s *service) InsertUser(email, password string) (int, error) {
+    var userID int
+    query := "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id"
+    err := s.db.QueryRow(query, email, password).Scan(&userID)
+    if err != nil {
+        return 0, err
+    }
+    return userID, nil
+}
+
+// GetAllUsers returns the IDs and emails of all registered users.
+func (s *service) GetAllUsers() (map[int]string, error) {
+    users := make(map[int]string)
+    query := "SELECT id, email FROM users"
+    rows, err := s.db.Query(query)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var id int
+        var email string
+        if err := rows.Scan(&id, &email); err != nil {
+            return nil, err
+        }
+        users[id] = email
+    }
+
+    if err := rows.Err(); err != nil {
+        return nil, err
+    }
+
+    return users, nil
+}
+
+func (s *service) VerifyUser(email, password string) (bool, error) {
+	query := "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1 AND password=$2)"
+	var exists bool
+	err := s.db.QueryRow(query, email, password).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// GetUserPassword retrieves the hashed password for a given email.
+func (s *service) GetUserPassword(email string) (string, error) {
+    var hashedPassword string
+    query := "SELECT password FROM users WHERE email = $1"
+    err := s.db.QueryRow(query, email).Scan(&hashedPassword)
+    if err != nil {
+        if err == sql.ErrNoRows {
+            return "", fmt.Errorf("user not found")
+        }
+        return "", err
+    }
+    return hashedPassword, nil
 }
