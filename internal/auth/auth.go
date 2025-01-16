@@ -1,13 +1,11 @@
 package auth
 
 import (
-	"log"
 	"os"
 
 	"net/http"
 
 	"github.com/gorilla/sessions"
-	"github.com/joho/godotenv"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
 	"github.com/markbates/goth/providers/google"
@@ -21,11 +19,6 @@ const (
 )
 
 func NewAuth() {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
-
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
 	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 
