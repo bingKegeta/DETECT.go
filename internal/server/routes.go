@@ -18,6 +18,7 @@ import (
 
 	"github.com/markbates/goth/gothic"
 	"golang.org/x/crypto/bcrypt"
+	"github.com/golang-jwt/jwt/v4"
 )
 
 func (s *Server) RegisterRoutes() http.Handler {
@@ -230,6 +231,8 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
     w.Write(usersJSON)
 }
 
+var jwtSecret = []byte("your_secret_key")
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
     // Parse request body
     var req struct {
@@ -268,6 +271,26 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Login successful"))
+	// w.WriteHeader(http.StatusOK)
+	// w.Write([]byte("Login successful"))
+
+	// ✅ Generate JWT token
+	claims := &jwt.StandardClaims{
+		Subject:   req.Email,
+		ExpiresAt: time.Now().Add(24 * time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signedToken, err := token.SignedString(jwtSecret)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	// ✅ Send response with JWT
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Login successful",
+		"token":   signedToken, // Return JWT token
+	})
 }
