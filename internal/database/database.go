@@ -37,6 +37,9 @@ type Service interface {
 
 	// GetUserPassword retrieves the hashed password for a given email.
 	GetUserPassword(email string) (string, error)
+
+	// InsertUserToken inserts token upon login
+	InsertUserToken(email, token string) error
 }
 
 type service struct {
@@ -207,4 +210,11 @@ func (s *service) GetUserPassword(email string) (string, error) {
         return "", err
     }
     return hashedPassword, nil
+}
+
+// InsertUserToken inserts the JWT token and creation timestamp for the user.
+func (s *service) InsertUserToken(email, token string) error {
+    query := "UPDATE users SET auth_token=$1, auth_token_created_at=NOW() WHERE email=$2"
+    _, err := s.db.Exec(query, token, email)
+    return err
 }
