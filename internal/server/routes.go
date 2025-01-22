@@ -121,6 +121,13 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Insert the JWT token into the database
+	err = dbService.InsertUserToken(user.Email, signedToken)
+	if err != nil {
+		http.Error(w, "Failed to insert token into the database", http.StatusInternalServerError)
+		return
+	}
+
 	// Redirect to the frontend dashboard with the token
 	http.Redirect(w, r, fmt.Sprintf("http://localhost:4321/dashboard?token=%s", signedToken), http.StatusFound)
 }
@@ -170,7 +177,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
     // Generate JWT token
     claims := &jwt.StandardClaims{
         Subject:   req.Email,
-        ExpiresAt: time.Now().Add(24 * time.Hour).Unix(),
+        ExpiresAt: time.Now().Add(168 * time.Hour).Unix(),
     }
     token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
     signedToken, err := token.SignedString(jwtSecret)
@@ -178,7 +185,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
         jsonErrorResponse(w, "Failed to generate token", http.StatusInternalServerError)
         return
     }
-
+	
+    // Insert the JWT token into the database
+    err = dbService.InsertUserToken(req.Email, signedToken)
+    if err != nil {
+        jsonErrorResponse(w, "Failed to insert token into the database", http.StatusInternalServerError)
+        return
+    }
+	
     // Send response with JWT
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]interface{}{
