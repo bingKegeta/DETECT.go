@@ -110,9 +110,9 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate JWT for OAuth user
-	claims := &jwt.StandardClaims{
+	claims := &jwt.RegisteredClaims{
 		Subject:   user.Email,
-		ExpiresAt: time.Now().Add(24 * time.Hour).Unix(),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signedToken, err := token.SignedString(jwtSecret)
