@@ -22,6 +22,10 @@ import (
 
 var jwtSecret []byte
 
+/*
+! Send the JWT token as a cookie to the client on traditional login/register
+*/
+
 
 func init() {
 	// Load .env file
@@ -128,8 +132,19 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Redirect to the frontend dashboard with the token
-	http.Redirect(w, r, fmt.Sprintf("http://localhost:4321/dashboard?token=%s", signedToken), http.StatusFound)
+	 // Set the JWT token in a secure, HTTP-only cookie
+	 http.SetCookie(w, &http.Cookie{
+        Name:     "token",
+        Value:    "Bearer " + signedToken,
+        Expires:  time.Now().Add(24 * time.Hour),
+        HttpOnly: true,
+        Secure:   true, // Set to true in production
+        Path:     "/",
+        SameSite: http.SameSiteLaxMode,
+    })
+
+	// Redirect to the frontend dashboard
+	http.Redirect(w, r, os.Getenv("CLIENT_URL") + "/dashboard", http.StatusFound)
 }
 
 func jsonErrorResponse(w http.ResponseWriter, message string, statusCode int) {
@@ -321,5 +336,5 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("No OAuth session to clear: ", err)
 	}
 
-	http.Redirect(w, r, "http://localhost:4321/", http.StatusFound)
+	http.Redirect(w, r, os.Getenv("CLIENT_URL") + "/", http.StatusFound)
 }
