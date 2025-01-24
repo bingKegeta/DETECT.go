@@ -138,7 +138,7 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
         Value:    "Bearer " + signedToken,
         Expires:  time.Now().Add(24 * time.Hour),
         HttpOnly: true,
-        Secure:   true, // Set to true in production
+        Secure:   false, // Set to true in production
         Path:     "/",
         SameSite: http.SameSiteLaxMode,
     })
