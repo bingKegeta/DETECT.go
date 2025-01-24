@@ -40,6 +40,9 @@ type Service interface {
 
 	// InsertUserToken inserts token upon login
 	InsertUserToken(email, token string) error
+
+	// RemoveUserToken removes the JWT token for a given email.
+	RemoveUserToken(token string) error
 }
 
 type service struct {
@@ -216,5 +219,12 @@ func (s *service) GetUserPassword(email string) (string, error) {
 func (s *service) InsertUserToken(email, token string) error {
     query := "UPDATE users SET auth_token=$1, auth_token_created_at=NOW() WHERE email=$2"
     _, err := s.db.Exec(query, token, email)
+    return err
+}
+
+// RemoveUserToken removes the JWT token for a given email.
+func (s *service) RemoveUserToken(token string) error {
+    query := "UPDATE users SET auth_token=NULL, auth_token_created_at=NULL WHERE auth_token=$1"
+    _, err := s.db.Exec(query, token)
     return err
 }
