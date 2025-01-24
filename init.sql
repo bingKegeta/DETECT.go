@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS Users (
     password VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     auth_token VARCHAR(255),
-    auth_token_created_at TIMESTAMP,
+    auth_token_created_at TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON Users(email);
