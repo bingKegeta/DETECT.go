@@ -315,7 +315,7 @@ func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("session")
+	cookie, err := r.Cookie("token")
 	if err == nil && cookie.Value != "" {
 		dbService := database.New()
 		err := dbService.RemoveUserToken(cookie.Value)
@@ -323,7 +323,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to remove token from database: %v", err)
 		}
 		http.SetCookie(w, &http.Cookie{
-			Name:     "session",
+			Name:     "token",
 			Value:    "",
 			Path:     "/",
 			MaxAge:   -1,
