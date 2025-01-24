@@ -84,7 +84,7 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// Complete the OAuth flow
 	user, err := gothic.CompleteUserAuth(w, r)
 	if err != nil {
-		http.Error(w, "Could not complete authentication: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Could not complete authentication: "+ err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -175,9 +175,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
     }
 
     // Generate JWT token
-    claims := &jwt.StandardClaims{
+    claims := &jwt.RegisteredClaims{
         Subject:   req.Email,
-        ExpiresAt: time.Now().Add(168 * time.Hour).Unix(),
+        ExpiresAt: jwt.NewNumericDate(time.Now().Add(168 * time.Hour)),
     }
     token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
     signedToken, err := token.SignedString(jwtSecret)
@@ -302,6 +302,11 @@ func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("session")
 	if err == nil && cookie.Value != "" {
+		dbService := database.New()
+		err := dbService.RemoveUserToken(cookie.Value)
+		if err != nil {
+			log.Printf("Failed to remove token from database: %v", err)
+		}
 		http.SetCookie(w, &http.Cookie{
 			Name:     "session",
 			Value:    "",
