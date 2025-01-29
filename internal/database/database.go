@@ -43,6 +43,9 @@ type Service interface {
 
 	// RemoveUserToken removes the JWT token for a given email.
 	RemoveUserToken(token string) error
+
+	// GetUserByToken takes token input and helps validate the user on operation
+	GetUserByToken(token string) (string, bool, error)
 }
 
 type service struct {
@@ -227,4 +230,21 @@ func (s *service) RemoveUserToken(token string) error {
     query := "UPDATE users SET auth_token=NULL, auth_token_created_at=NULL WHERE auth_token=$1"
     _, err := s.db.Exec(query, token)
     return err
+}
+
+func (s *service) GetUserByToken(token string) (string, bool, error) {
+	var email string
+
+	query := `SELECT email FROM Users WHERE auth_token = $1`
+	row:= s.db.QueryRow(query, token)
+
+	err := row.Scan(&email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("error querying database: %v", err)
+	}
+
+	return email, true, nil
 }
