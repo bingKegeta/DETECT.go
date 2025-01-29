@@ -46,8 +46,12 @@ func init() {
 func (s *Server) RegisterRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
+	environment := os.Getenv("CLIENT_URL")
+	if environment == "" {
+		log.Fatalf("CLIENT_URL is not set in the .env file")
+	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedOrigins:   []string{environment},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
@@ -135,12 +139,12 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 	 // Set the JWT token in a secure, HTTP-only cookie
 	 http.SetCookie(w, &http.Cookie{
         Name:     "token",
-        Value:    "Bearer " + signedToken,
+        Value:    signedToken,
         Expires:  time.Now().Add(24 * time.Hour),
         HttpOnly: true,
         Secure:   false, // Set to true in production
         Path:     "/",
-        SameSite: http.SameSiteLaxMode,
+        SameSite: http.SameSiteNoneMode,
     })
 
 	// Redirect to the frontend dashboard
@@ -207,13 +211,24 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
         jsonErrorResponse(w, "Failed to insert token into the database", http.StatusInternalServerError)
         return
     }
+
+	// Set the JWT token in a secure, HTTP-only cookie
+	http.SetCookie(w, &http.Cookie{
+        Name:     "token",
+        Value:    signedToken,
+        Expires:  time.Now().Add(24 * time.Hour),
+        HttpOnly: true,
+        Secure:   false, // Set to true in production
+        Path:     "/",
+        SameSite: http.SameSiteNoneMode,
+    })
 	
     // Send response with JWT
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]interface{}{
         "success": true,
         "message": "Login successful",
-        "token":   signedToken,
+        // "token":   signedToken,
     })
 }
 
@@ -259,8 +274,42 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate JWT token
+    claims := &jwt.RegisteredClaims{
+        Subject:   req.Email,
+        ExpiresAt: jwt.NewNumericDate(time.Now().Add(168 * time.Hour)),
+    }
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    signedToken, err := token.SignedString(jwtSecret)
+    if err != nil {
+        jsonErrorResponse(w, "Failed to generate token", http.StatusInternalServerError)
+        return
+    }
+	
+    // Insert the JWT token into the database
+    err = dbService.InsertUserToken(req.Email, signedToken)
+    if err != nil {
+        jsonErrorResponse(w, "Failed to insert token into the database", http.StatusInternalServerError)
+        return
+    }
+
+	// Set the JWT token in a secure, HTTP-only cookie
+	http.SetCookie(w, &http.Cookie{
+        Name:     "token",
+        Value:    signedToken,
+        Expires:  time.Now().Add(24 * time.Hour),
+        HttpOnly: true,
+        Secure:   false, // Set to true in production
+        Path:     "/",
+        SameSite: http.SameSiteLaxMode,
+    })
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(fmt.Sprintf("User created with ID: %d", userID)))
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "User created successfully",
+		"userID":  userID,
+	})
 }
 
 func handleGetUsers(w http.ResponseWriter, r *http.Request) {
