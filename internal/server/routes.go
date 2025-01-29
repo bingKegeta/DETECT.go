@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+	"os/exec"
 
 	"DETECT.go/internal/database"
 	"github.com/coder/websocket"
@@ -67,6 +68,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Get("/auth/{provider}/callback", s.getAuthCallback)
 	r.Get("/logout", s.logout)
 	r.Get("/users", handleGetUsers)
+	r.Post("/processCoords", s.processCoordsHandler)
 
 	return r
 }
@@ -386,4 +388,65 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, os.Getenv("CLIENT_URL") + "/", http.StatusFound)
+}
+
+func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+    		Coordinates [][]float64 `json:"coordinates"`
+  	}
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		log.Printf("Error reading cookie: %v", err)
+		http.Error(w, "Token cookie not found", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	dbService := database.New()
+
+  	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("JSON decode error: %v", err)
+   		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+    		return
+  	}
+
+  	jsonData, err := json.Marshal(req)
+  	if err != nil {
+    		log.Printf("JSON marshal error: %v", err)
+    		http.Error(w, "Failed to process data", http.StatusInternalServerError)
+    		return
+  	}
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil {
+		log.Printf("Error getting user by token: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !valid {
+		log.Printf("Invalid token")
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	log.Printf("Token belongs to user: %s", email)
+
+  	configFilePath := "./config.json"
+  	if err := os.WriteFile(configFilePath, jsonData, 0644); err != nil {
+   		log.Printf("Failed to write config.json: %v", err)
+    		http.Error(w, "Failed to save config.json", http.StatusInternalServerError)
+    		return
+  	}	
+
+  	cmd := exec.Command("python3", "HMM.py", configFilePath)
+  	output, err := cmd.CombinedOutput()
+  	if err != nil {
+    		log.Printf("HMM.py execution error: %v, output: %s", err, string(output))
+    		http.Error(w, "Failed to execute HMM.py", http.StatusInternalServerError)
+    		return
+  	}
+
+  	w.Header().Set("Content-Type", "application/json")
+  	w.Write(output)
 }
