@@ -67,6 +67,10 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Get("/auth/{provider}/callback", s.getAuthCallback)
 	r.Get("/logout", s.logout)
 	r.Get("/users", handleGetUsers)
+	r.Get("/getSessions", handleGetUserSessions)
+	r.Get("/sessionAnalysis", handleGetAnalysis)
+	r.Post("/createSession", handleCreateSession)
+
 
 	return r
 }
@@ -386,4 +390,151 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, os.Getenv("CLIENT_URL") + "/", http.StatusFound)
+}
+
+type Session struct {
+	StartTime string  `json:"start_time"`
+	EndTime   string  `json:"end_time"`
+	Min       float64 `json:"min"`
+	Max       float64 `json:"max"`
+	CreatedAt string  `json:"created_at"`
+}
+
+type Analysis struct {
+	SessionID int     `json:"session_id"`
+	Timestamp float64 `json:"timestamp"`
+	X         float64 `json:"x"`
+	Y         float64 `json:"y"`
+	Prob      float64 `json:"prob"`
+	CreatedAt string  `json:"created_at"`
+}
+
+func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	// Extract token from cookies
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	// Get the user email from the token
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	// Retrieve user ID from email
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// Retrieve sessions for this user
+	sessions, err := dbService.GetUserSessions(userID)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	// Encode the response as JSON
+	sessionsJSON, err := json.Marshal(sessions)
+	if err != nil {
+		http.Error(w, "Failed to encode sessions to JSON", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(sessionsJSON)
+}
+
+// HandleGetSessionAnalysis retrieves analysis data for a specific session
+func handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	// Decode JSON request body
+	var requestData struct {
+		SessionID int `json:"session_id"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&requestData)
+	if err != nil {
+		http.Error(w, "Invalid JSON input", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch analysis data for the given session ID
+	analysisData, err := dbService.GetSessionAnalysis(requestData.SessionID)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert analysis data to JSON
+	analysisJSON, err := json.Marshal(analysisData)
+	if err != nil {
+		http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
+		return
+	}
+
+	// Send response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(analysisJSON)
+}
+
+func handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	// Retrieve the token from cookies
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Token missing", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	// Get user email using the token
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	// Get user ID using the email
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// Decode JSON request body
+	var requestData struct {
+		StartTime string  `json:"start_time"`
+		EndTime   string  `json:"end_time"`
+		Min       float64 `json:"min"`
+		Max       float64 `json:"max"`
+	}
+
+	err = json.NewDecoder(r.Body).Decode(&requestData)
+	if err != nil {
+		http.Error(w, "Invalid JSON input", http.StatusBadRequest)
+		return
+	}
+
+	// Create session in the database
+	err = dbService.CreateSession(userID, requestData.StartTime, requestData.EndTime, requestData.Min, requestData.Max)
+	if err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	// Send response
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(`{"message": "Session created successfully"}`))
 }
