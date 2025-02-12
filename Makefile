@@ -44,6 +44,16 @@ clean:
 	@echo "Cleaning..."
 	@rm -f main
 
+# Full clean the binary and Docker containers
+full-clean: clean
+	@echo "Full cleaning..."
+	@if docker compose down -v 2>/dev/null; then \
+		: ; \
+	else \
+		echo "Falling back to Docker Compose V1"; \
+		docker-compose down -v; \
+	fi
+
 # Live Reload
 watch:
 	@if command -v air > /dev/null; then \
@@ -61,4 +71,4 @@ watch:
             fi; \
         fi
 
-.PHONY: all build run test clean watch docker-run docker-down itest
+.PHONY: all build run test clean watch docker-run docker-down itest full-clean
