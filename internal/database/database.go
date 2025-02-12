@@ -43,6 +43,14 @@ type Service interface {
 
 	// RemoveUserToken removes the JWT token for a given email.
 	RemoveUserToken(token string) error
+
+	GetUserSessions(userID int) ([]Session, error)
+
+	GetSessionAnalysis(sessionID int) ([]Analysis, error)
+
+	GetUserIDByEmail(email string) (int, error)
+
+	CreateSession(userID int, startTime, endTime string, min, max float64) error
 }
 
 type service struct {
@@ -227,4 +235,93 @@ func (s *service) RemoveUserToken(token string) error {
     query := "UPDATE users SET auth_token=NULL, auth_token_created_at=NULL WHERE auth_token=$1"
     _, err := s.db.Exec(query, token)
     return err
+}
+
+type Session struct {
+	UserID    int
+	StartTime string
+	EndTime   string
+	Min       float64
+	Max       float64
+	CreatedAt string
+}
+
+type Analysis struct {
+	SessionID int     `json:"session_id"`
+	Timestamp float64 `json:"timestamp"`
+	X         float64 `json:"x"`
+	Y         float64 `json:"y"`
+	Prob      float64 `json:"prob"`
+	CreatedAt string  `json:"created_at"`
+}
+
+func (s *service) GetUserSessions(userID int) ([]Session, error) {
+	var sessions []Session
+
+	query := `SELECT user_id, start_time, end_time, min, max, created_at FROM session WHERE user_id = $1 ORDER BY start_time DESC`
+	rows, err := s.db.Query(query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("error querying database: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ses Session
+		err := rows.Scan(&ses.UserID, &ses.StartTime, &ses.EndTime, &ses.Min, &ses.Max, &ses.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning row: %v", err)
+		}
+		sessions = append(sessions, ses)
+	}
+
+	return sessions, nil
+}
+
+func (s *service) GetSessionAnalysis(sessionID int) ([]Analysis, error) {
+	var analysisData []Analysis
+
+	query := `SELECT session_id, timestamp, x, y, prob, created_at FROM analysis WHERE session_id = $1 ORDER BY timestamp ASC`
+	rows, err := s.db.Query(query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("error querying database: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var analysis Analysis
+		err := rows.Scan(&analysis.SessionID, &analysis.Timestamp, &analysis.X, &analysis.Y, &analysis.Prob, &analysis.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning row: %v", err)
+		}
+		analysisData = append(analysisData, analysis)
+	}
+
+	return analysisData, nil
+}
+
+func (s *service) GetUserIDByEmail(email string) (int, error) {
+	var userID int
+
+	query := `SELECT id FROM Users WHERE email = $1`
+	row := s.db.QueryRow(query, email)
+
+	err := row.Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("user not found")
+		}
+		return 0, fmt.Errorf("error querying database: %v", err)
+	}
+
+	return userID, nil
+}
+
+func (s *service) CreateSession(userID int, startTime, endTime string, min, max float64) error {
+	query := `INSERT INTO session (user_id, start_time, end_time, min, max) VALUES ($1, $2, $3, $4, $5)`
+	_, err := s.db.Exec(query, userID, startTime, endTime, min, max)
+	if err != nil {
+		return fmt.Errorf("error inserting session: %v", err)
+	}
+
+	return nil
 }
