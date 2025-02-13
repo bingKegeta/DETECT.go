@@ -15,12 +15,10 @@ import (
 
 // Service represents a service that interacts with a database.
 type Service interface {
-	// Health returns a map of health status information.
-	// The keys and values in the map are service-specific.
+	// Health checks the health of the database connection.
 	Health() map[string]string
 
 	// Close terminates the database connection.
-	// It returns an error if the connection cannot be closed.
 	Close() error
 
 	// UserExists checks if a user exists by username.
@@ -38,11 +36,17 @@ type Service interface {
 	// GetUserPassword retrieves the hashed password for a given email.
 	GetUserPassword(email string) (string, error)
 
-	// InsertUserToken inserts token upon login
+	// InsertUserToken inserts a JWT token upon login.
 	InsertUserToken(email, token string) error
 
 	// RemoveUserToken removes the JWT token for a given email.
 	RemoveUserToken(token string) error
+
+	// InsertWebSocketMessage inserts a WebSocket message into the database.
+	InsertWebSocketMessage(msg WebSocketMessage) error
+
+	// GetDB returns the underlying *sql.DB instance.
+	GetDB() *sql.DB // Ensure the method is part of the Service interface
 }
 
 type service struct {
@@ -59,6 +63,16 @@ var (
 	dbInstance *service
 )
 
+// WebSocketMessage represents a message from the WebSocket.
+type WebSocketMessage struct {
+	X             float64 `json:"x"`
+	Y             float64 `json:"y"`
+	Second        float64 `json:"second"`
+	IsVideo       bool    `json:"is_uploaded_video"`
+	VideoDuration float64 `json:"video_duration"`
+}
+
+// New creates a new database service instance.
 func New() Service {
 	// Reuse Connection
 	if dbInstance != nil {
@@ -68,14 +82,14 @@ func New() Service {
 	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s", username, password, host, port, database, schema)
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
-        log.Fatalf("Failed to connect to database: %v", err)
-    }
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
 
 	// Ping the database to ensure the connection is established
-    err = db.Ping()
-    if err != nil {
-        log.Fatalf("Failed to ping database: %v", err)
-    }
+	err = db.Ping()
+	if err != nil {
+		log.Fatalf("Failed to ping database: %v", err)
+	}
 
 	dbInstance = &service{
 		db: db,
@@ -84,7 +98,6 @@ func New() Service {
 }
 
 // Health checks the health of the database connection by pinging the database.
-// It returns a map with keys indicating various health statistics.
 func (s *service) Health() map[string]string {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -135,62 +148,76 @@ func (s *service) Health() map[string]string {
 }
 
 // Close closes the database connection.
-// It logs a message indicating the disconnection from the specific database.
-// If the connection is successfully closed, it returns nil.
-// If an error occurs while closing the connection, it returns the error.
 func (s *service) Close() error {
 	log.Printf("Disconnected from database: %s", database)
 	return s.db.Close()
 }
 
-// Check if a user exists by email
-func (s *service) UserExists(email string) (bool, error) {
-    var exists bool
-    query := "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)"
-    err := s.db.QueryRow(query, email).Scan(&exists)
-    if err != nil {
-        return false, err
-    }
-    return exists, nil
+// InsertWebSocketMessage inserts a WebSocket message into the database.
+func (s *service) InsertWebSocketMessage(msg WebSocketMessage) error {
+	// Insert the WebSocket message into the database
+	query := `
+		INSERT INTO websocket_messages (x, y, second, is_uploaded_video, video_duration)
+		VALUES ($1, $2, $3, $4, $5)
+	`
+
+	_, err := s.db.Exec(query, msg.X, msg.Y, msg.Second, msg.IsVideo, msg.VideoDuration)
+	if err != nil {
+		return fmt.Errorf("failed to insert WebSocket message: %w", err)
+	}
+
+	return nil
 }
 
-// Insert a new user into the database
+// UserExists checks if a user exists by email.
+func (s *service) UserExists(email string) (bool, error) {
+	var exists bool
+	query := "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)"
+	err := s.db.QueryRow(query, email).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// InsertUser inserts a new user into the database.
 func (s *service) InsertUser(email, password string) (int, error) {
-    var userID int
-    query := "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id"
-    err := s.db.QueryRow(query, email, password).Scan(&userID)
-    if err != nil {
-        return 0, err
-    }
-    return userID, nil
+	var userID int
+	query := "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id"
+	err := s.db.QueryRow(query, email, password).Scan(&userID)
+	if err != nil {
+		return 0, err
+	}
+	return userID, nil
 }
 
 // GetAllUsers returns the IDs and emails of all registered users.
 func (s *service) GetAllUsers() (map[int]string, error) {
-    users := make(map[int]string)
-    query := "SELECT id, email FROM users"
-    rows, err := s.db.Query(query)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
+	users := make(map[int]string)
+	query := "SELECT id, email FROM users"
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-    for rows.Next() {
-        var id int
-        var email string
-        if err := rows.Scan(&id, &email); err != nil {
-            return nil, err
-        }
-        users[id] = email
-    }
+	for rows.Next() {
+		var id int
+		var email string
+		if err := rows.Scan(&id, &email); err != nil {
+			return nil, err
+		}
+		users[id] = email
+	}
 
-    if err := rows.Err(); err != nil {
-        return nil, err
-    }
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-    return users, nil
+	return users, nil
 }
 
+// VerifyUser verifies a user's credentials.
 func (s *service) VerifyUser(email, password string) (bool, error) {
 	query := "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1 AND password=$2)"
 	var exists bool
@@ -203,28 +230,44 @@ func (s *service) VerifyUser(email, password string) (bool, error) {
 
 // GetUserPassword retrieves the hashed password for a given email.
 func (s *service) GetUserPassword(email string) (string, error) {
-    var hashedPassword string
-    query := "SELECT password FROM users WHERE email = $1"
-    err := s.db.QueryRow(query, email).Scan(&hashedPassword)
-    if err != nil {
-        if err == sql.ErrNoRows {
-            return "", fmt.Errorf("user not found")
-        }
-        return "", err
-    }
-    return hashedPassword, nil
+	var hashedPassword string
+	query := "SELECT password FROM users WHERE email = $1"
+	err := s.db.QueryRow(query, email).Scan(&hashedPassword)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("user not found")
+		}
+		return "", err
+	}
+	return hashedPassword, nil
 }
 
 // InsertUserToken inserts the JWT token and creation timestamp for the user.
 func (s *service) InsertUserToken(email, token string) error {
-    query := "UPDATE users SET auth_token=$1, auth_token_created_at=NOW() WHERE email=$2"
-    _, err := s.db.Exec(query, token, email)
-    return err
+	query := "UPDATE users SET auth_token=$1, auth_token_created_at=NOW() WHERE email=$2"
+	_, err := s.db.Exec(query, token, email)
+	return err
 }
 
 // RemoveUserToken removes the JWT token for a given email.
 func (s *service) RemoveUserToken(token string) error {
-    query := "UPDATE users SET auth_token=NULL, auth_token_created_at=NULL WHERE auth_token=$1"
-    _, err := s.db.Exec(query, token)
-    return err
+	query := "UPDATE users SET auth_token=NULL, auth_token_created_at=NULL WHERE auth_token=$1"
+	_, err := s.db.Exec(query, token)
+	return err
+}
+
+// Save a WebSocket message into the WebSocketMessages table
+func (s *service) SaveWebSocketMessage(message string) error {
+	query := "INSERT INTO WebSocketMessages (message, timestamp) VALUES ($1, NOW())"
+	_, err := s.db.Exec(query, message)
+	if err != nil {
+		log.Printf("Error executing query: %v", err)
+		return err
+	}
+	return nil
+}
+
+// GetDB returns the underlying *sql.DB instance.
+func (s *service) GetDB() *sql.DB {
+	return s.db
 }
