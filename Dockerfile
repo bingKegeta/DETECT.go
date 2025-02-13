@@ -16,9 +16,6 @@ WORKDIR /app
 COPY --from=build /app/main /app/main
 
 COPY .env .env
-COPY HMM.py /app/HMM.py
-
-RUN apk update && apk add --no-cache python3 py3-pip
 
 EXPOSE ${PORT}
 
