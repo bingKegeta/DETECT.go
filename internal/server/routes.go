@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"DETECT.go/internal/database"
-	"github.com/coder/websocket"
+	"DETECT.go/internal/websocket"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -25,7 +25,6 @@ var jwtSecret []byte
 /*
 ! Send the JWT token as a cookie to the client on traditional login/register
 */
-
 
 func init() {
 	// Load .env file
@@ -60,15 +59,30 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	r.Get("/", s.HelloWorldHandler)
 	r.Get("/health", s.healthHandler)
-	r.Get("/websocket", s.websocketHandler)
 	r.Post("/login", s.handleLogin)
 	r.Post("/register", s.handleRegister)
 	r.Get("/auth/{provider}", s.startAuth)
 	r.Get("/auth/{provider}/callback", s.getAuthCallback)
 	r.Get("/logout", s.logout)
 	r.Get("/users", handleGetUsers)
+	r.Get("/ws", s.websocketHandler)
 
 	return r
+}
+
+func (s *Server) websocketHandler(w http.ResponseWriter, r *http.Request) {
+	// Start the WebSocket server (in a new goroutine to prevent blocking)
+	go func() {
+		err := websocket.StartServer()
+		if err != nil {
+			log.Fatalf("Error starting WebSocket server: %v", err)
+		}
+	}()
+
+	// Send a simple response to indicate that the WebSocket server is running
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "WebSocket server started on ws://localhost:9090"})
 }
 
 func (s *Server) HelloWorldHandler(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +106,7 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// Complete the OAuth flow
 	user, err := gothic.CompleteUserAuth(w, r)
 	if err != nil {
-		http.Error(w, "Could not complete authentication: "+ err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Could not complete authentication: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -136,100 +150,100 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	 // Set the JWT token in a secure, HTTP-only cookie
-	 http.SetCookie(w, &http.Cookie{
-        Name:     "token",
-        Value:    signedToken,
-        Expires:  time.Now().Add(24 * time.Hour),
-        HttpOnly: true,
-        Secure:   false, // Set to true in production
-        Path:     "/",
-        SameSite: http.SameSiteNoneMode,
-    })
+	// Set the JWT token in a secure, HTTP-only cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "token",
+		Value:    signedToken,
+		Expires:  time.Now().Add(24 * time.Hour),
+		HttpOnly: true,
+		Secure:   false, // Set to true in production
+		Path:     "/",
+		SameSite: http.SameSiteNoneMode,
+	})
 
 	// Redirect to the frontend dashboard
-	http.Redirect(w, r, os.Getenv("CLIENT_URL") + "/dashboard", http.StatusFound)
+	http.Redirect(w, r, os.Getenv("CLIENT_URL")+"/dashboard", http.StatusFound)
 }
 
 func jsonErrorResponse(w http.ResponseWriter, message string, statusCode int) {
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(statusCode)
-    json.NewEncoder(w).Encode(map[string]string{"error": message})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-    var req struct {
-        Email    string `json:"email"`
-        Password string `json:"password"`
-    }
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
 
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        jsonErrorResponse(w, "Invalid request body", http.StatusBadRequest)
-        return
-    }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErrorResponse(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
 
-    dbService := database.New()
+	dbService := database.New()
 
-    exists, err := dbService.UserExists(req.Email)
-    if err != nil {
-        jsonErrorResponse(w, "Database error", http.StatusInternalServerError)
-        return
-    }
+	exists, err := dbService.UserExists(req.Email)
+	if err != nil {
+		jsonErrorResponse(w, "Database error", http.StatusInternalServerError)
+		return
+	}
 
-    if !exists {
-        jsonErrorResponse(w, "User does not exist", http.StatusNotFound)
-        return
-    }
+	if !exists {
+		jsonErrorResponse(w, "User does not exist", http.StatusNotFound)
+		return
+	}
 
-    storedHashedPassword, err := dbService.GetUserPassword(req.Email)
-    if err != nil {
-        jsonErrorResponse(w, "Database error", http.StatusInternalServerError)
-        return
-    }
+	storedHashedPassword, err := dbService.GetUserPassword(req.Email)
+	if err != nil {
+		jsonErrorResponse(w, "Database error", http.StatusInternalServerError)
+		return
+	}
 
-    err = bcrypt.CompareHashAndPassword([]byte(storedHashedPassword), []byte(req.Password))
-    if err != nil {
-        jsonErrorResponse(w, "Invalid credentials", http.StatusUnauthorized)
-        return
-    }
+	err = bcrypt.CompareHashAndPassword([]byte(storedHashedPassword), []byte(req.Password))
+	if err != nil {
+		jsonErrorResponse(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
 
-    // Generate JWT token
-    claims := &jwt.RegisteredClaims{
-        Subject:   req.Email,
-        ExpiresAt: jwt.NewNumericDate(time.Now().Add(168 * time.Hour)),
-    }
-    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-    signedToken, err := token.SignedString(jwtSecret)
-    if err != nil {
-        jsonErrorResponse(w, "Failed to generate token", http.StatusInternalServerError)
-        return
-    }
-	
-    // Insert the JWT token into the database
-    err = dbService.InsertUserToken(req.Email, signedToken)
-    if err != nil {
-        jsonErrorResponse(w, "Failed to insert token into the database", http.StatusInternalServerError)
-        return
-    }
+	// Generate JWT token
+	claims := &jwt.RegisteredClaims{
+		Subject:   req.Email,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(168 * time.Hour)),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signedToken, err := token.SignedString(jwtSecret)
+	if err != nil {
+		jsonErrorResponse(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	// Insert the JWT token into the database
+	err = dbService.InsertUserToken(req.Email, signedToken)
+	if err != nil {
+		jsonErrorResponse(w, "Failed to insert token into the database", http.StatusInternalServerError)
+		return
+	}
 
 	// Set the JWT token in a secure, HTTP-only cookie
 	http.SetCookie(w, &http.Cookie{
-        Name:     "token",
-        Value:    signedToken,
-        Expires:  time.Now().Add(24 * time.Hour),
-        HttpOnly: true,
-        Secure:   false, // Set to true in production
-        Path:     "/",
-        SameSite: http.SameSiteNoneMode,
-    })
-	
-    // Send response with JWT
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]interface{}{
-        "success": true,
-        "message": "Login successful",
-        // "token":   signedToken,
-    })
+		Name:     "token",
+		Value:    signedToken,
+		Expires:  time.Now().Add(24 * time.Hour),
+		HttpOnly: true,
+		Secure:   false, // Set to true in production
+		Path:     "/",
+		SameSite: http.SameSiteNoneMode,
+	})
+
+	// Send response with JWT
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Login successful",
+		// "token":   signedToken,
+	})
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -275,34 +289,34 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate JWT token
-    claims := &jwt.RegisteredClaims{
-        Subject:   req.Email,
-        ExpiresAt: jwt.NewNumericDate(time.Now().Add(168 * time.Hour)),
-    }
-    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-    signedToken, err := token.SignedString(jwtSecret)
-    if err != nil {
-        jsonErrorResponse(w, "Failed to generate token", http.StatusInternalServerError)
-        return
-    }
-	
-    // Insert the JWT token into the database
-    err = dbService.InsertUserToken(req.Email, signedToken)
-    if err != nil {
-        jsonErrorResponse(w, "Failed to insert token into the database", http.StatusInternalServerError)
-        return
-    }
+	claims := &jwt.RegisteredClaims{
+		Subject:   req.Email,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(168 * time.Hour)),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signedToken, err := token.SignedString(jwtSecret)
+	if err != nil {
+		jsonErrorResponse(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	// Insert the JWT token into the database
+	err = dbService.InsertUserToken(req.Email, signedToken)
+	if err != nil {
+		jsonErrorResponse(w, "Failed to insert token into the database", http.StatusInternalServerError)
+		return
+	}
 
 	// Set the JWT token in a secure, HTTP-only cookie
 	http.SetCookie(w, &http.Cookie{
-        Name:     "token",
-        Value:    signedToken,
-        Expires:  time.Now().Add(24 * time.Hour),
-        HttpOnly: true,
-        Secure:   false, // Set to true in production
-        Path:     "/",
-        SameSite: http.SameSiteLaxMode,
-    })
+		Name:     "token",
+		Value:    signedToken,
+		Expires:  time.Now().Add(24 * time.Hour),
+		HttpOnly: true,
+		Secure:   false, // Set to true in production
+		Path:     "/",
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -330,31 +344,6 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(usersJSON)
-}
-
-func (s *Server) websocketHandler(w http.ResponseWriter, r *http.Request) {
-	socket, err := websocket.Accept(w, r, nil)
-
-	if err != nil {
-		log.Printf("could not open websocket: %v", err)
-		_, _ = w.Write([]byte("could not open websocket"))
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	defer socket.Close(websocket.StatusGoingAway, "server closing websocket")
-
-	ctx := r.Context()
-	socketCtx := socket.CloseRead(ctx)
-
-	for {
-		payload := fmt.Sprintf("server timestamp: %d", time.Now().UnixNano())
-		err := socket.Write(socketCtx, websocket.MessageText, []byte(payload))
-		if err != nil {
-			break
-		}
-		time.Sleep(time.Second * 2)
-	}
 }
 
 func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
@@ -385,5 +374,5 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("No OAuth session to clear: ", err)
 	}
 
-	http.Redirect(w, r, os.Getenv("CLIENT_URL") + "/", http.StatusFound)
+	http.Redirect(w, r, os.Getenv("CLIENT_URL")+"/", http.StatusFound)
 }
