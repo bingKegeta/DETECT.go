@@ -11,7 +11,7 @@ import (
 
 	"DETECT.go/internal/auth"
 	"DETECT.go/internal/server"
-	"DETECT.go/internal/websocket" // Import the websocket package
+	"DETECT.go/internal/websocket"
 )
 
 func gracefulShutdown(apiServer *http.Server, done chan bool) {
@@ -32,29 +32,27 @@ func gracefulShutdown(apiServer *http.Server, done chan bool) {
 		log.Printf("Server forced to shutdown with error: %v", err)
 	}
 
-	log.Println("API server exiting")
+	log.Println("Server exiting")
+
 	// Notify the main goroutine that the shutdown is complete
 	done <- true
 }
 
 func main() {
-	// Initialize authentication
-	auth.NewAuth()
 
-	// Create the HTTP API server
-	apiServer := server.NewServer()
+	auth.NewAuth()
+	server := server.NewServer()
+
+	// Start the WebSocket server in a separate goroutine
+	go websocket.StartServer()
 
 	// Create a done channel to signal when the shutdown is complete
 	done := make(chan bool, 1)
 
 	// Run graceful shutdown in a separate goroutine
-	go gracefulShutdown(apiServer, done)
+	go gracefulShutdown(server, done)
 
-	// Start the WebSocket server in a separate goroutine
-	go websocket.StartServer() // This is the WebSocket server
-
-	// Start the HTTP API server
-	err := apiServer.ListenAndServe()
+	err := server.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
 		panic(fmt.Sprintf("http server error: %s", err))
 	}
