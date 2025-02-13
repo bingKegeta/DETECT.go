@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 	"os/exec"
+	"math"
 
 	"DETECT.go/internal/database"
 	"github.com/coder/websocket"
@@ -390,10 +391,47 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, os.Getenv("CLIENT_URL") + "/", http.StatusFound)
 }
 
+type AnalysisState struct {
+	LastX, LastY, LastTime, LastVelocity float64
+	Initialized                          bool
+}
+
+func clipAndScale(value, min, max float64) float64 {
+	valAbs := math.Abs(value)
+	clipped := math.Min(math.Max(valAbs, min), max)
+	return 0.01 + 0.95*(clipped/max)
+}
+
+func singleUpdate(state *AnalysisState, t, x, y float64) (float64, float64, float64) {
+	if !state.Initialized {
+		state.LastX, state.LastY, state.LastTime, state.LastVelocity = x, y, t, 0.0
+		state.Initialized = true
+		return 0.0, 0.0, 0.05
+	}
+	dt := t - state.LastTime
+	if dt <= 0.0 {
+		return 0.0, 0.0, 0.05
+	}
+	dx := x - state.LastX
+	dy := y - state.LastY
+	variance := dx*dx + dy*dy
+	velocity := math.Sqrt(variance) / dt
+	acceleration := (velocity - state.LastVelocity) / dt
+
+	varianceNorm := clipAndScale(variance, 4.5e-07, 0.00013)
+	accelerationNorm := clipAndScale(acceleration, 0.3, 10.0)
+	probability := (varianceNorm + accelerationNorm) / 2.0
+
+	state.LastX, state.LastY, state.LastTime, state.LastVelocity = x, y, t, velocity
+
+	return varianceNorm, accelerationNorm, probability
+}
+
 func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-    		Coordinates [][]float64 `json:"coordinates"`
-  	}
+		Timestamp   float64     `json:"timestamp"`
+		Coordinates [][]float64 `json:"coordinates"`
+	}
 
 	cookie, err := r.Cookie("token")
 	if err != nil {
@@ -401,22 +439,14 @@ func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Token cookie not found", http.StatusUnauthorized)
 		return
 	}
+
 	token := cookie.Value
-
 	dbService := database.New()
-
-  	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("JSON decode error: %v", err)
-   		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-    		return
-  	}
-
-  	jsonData, err := json.Marshal(req)
-  	if err != nil {
-    		log.Printf("JSON marshal error: %v", err)
-    		http.Error(w, "Failed to process data", http.StatusInternalServerError)
-    		return
-  	}
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
 
 	email, valid, err := dbService.GetUserByToken(token)
 	if err != nil {
@@ -432,21 +462,28 @@ func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Token belongs to user: %s", email)
 
-  	configFilePath := "./config.json"
-  	if err := os.WriteFile(configFilePath, jsonData, 0644); err != nil {
-   		log.Printf("Failed to write config.json: %v", err)
-    		http.Error(w, "Failed to save config.json", http.StatusInternalServerError)
-    		return
-  	}	
+	state := &AnalysisState{}
+	var results []map[string]float64
 
-  	cmd := exec.Command("python3", "HMM.py", configFilePath)
-  	output, err := cmd.CombinedOutput()
-  	if err != nil {
-    		log.Printf("HMM.py execution error: %v, output: %s", err, string(output))
-    		http.Error(w, "Failed to execute HMM.py", http.StatusInternalServerError)
-    		return
-  	}
+	for _, coord := range req.Coordinates {
+		if len(coord) != 2 {
+			continue
+		}
+		vn, an, prob := singleUpdate(state, req.Timestamp, coord[0], coord[1])
+		results = append(results, map[string]float64{
+			"variance":    vn,
+			"acceleration": an,
+			"probability":  prob,
+		})
+	}
 
-  	w.Header().Set("Content-Type", "application/json")
-  	w.Write(output)
+	respData, err := json.Marshal(results)
+	if err != nil {
+		log.Printf("JSON marshal error: %v", err)
+		http.Error(w, "Failed to process data", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respData)
 }
