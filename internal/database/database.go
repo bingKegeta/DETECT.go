@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"time"
+	//"errors"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/joho/godotenv/autoload"
@@ -43,6 +44,8 @@ type Service interface {
 
 	// RemoveUserToken removes the JWT token for a given email.
 	RemoveUserToken(token string) error
+
+	GetUserByToken(token string) (string, bool, error)
 
 	GetUserSessions(userID int) ([]Session, error)
 
@@ -235,6 +238,24 @@ func (s *service) RemoveUserToken(token string) error {
     query := "UPDATE users SET auth_token=NULL, auth_token_created_at=NULL WHERE auth_token=$1"
     _, err := s.db.Exec(query, token)
     return err
+}
+
+// GetUserByToken gets the email of the user through token input
+func (s *service) GetUserByToken(token string) (string, bool, error) {
+	var email string
+
+	query := `SELECT email FROM Users WHERE auth_token = $1`
+	row:= s.db.QueryRow(query, token)
+
+	err := row.Scan(&email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("error querying database: %v", err)
+	}
+
+	return email, true, nil
 }
 
 type Session struct {
