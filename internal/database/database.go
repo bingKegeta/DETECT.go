@@ -46,6 +46,10 @@ type Service interface {
 
 	// GetUserByToken takes token input and helps validate the user on operation
 	GetUserByToken(token string) (string, bool, error)
+
+	GetUserIDByEmail(email string) (int, error)
+
+	CreateSession(userID int, startTime, endTime string, min, max float64) error
 }
 
 type service struct {
@@ -249,4 +253,31 @@ func (s *service) GetUserByToken(token string) (string, bool, error) {
 	}
 
 	return email, true, nil
+}
+
+func (s *service) GetUserIDByEmail(email string) (int, error) {
+	var userID int
+
+	query := `SELECT id FROM Users WHERE email = $1`
+	row := s.db.QueryRow(query, email)
+
+	err := row.Scan(&userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("user not found")
+		}
+		return 0, fmt.Errorf("error querying database: %v", err)
+	}
+
+	return userID, nil
+}
+
+func (s *service) CreateSession(userID int, startTime, endTime string, min, max float64) error {
+	query := `INSERT INTO session (user_id, start_time, end_time, min, max) VALUES ($1, $2, $3, $4, $5)`
+	_, err := s.db.Exec(query, userID, startTime, endTime, min, max)
+	if err != nil {
+		return fmt.Errorf("error inserting session: %v", err)
+	}
+
+	return nil
 }
