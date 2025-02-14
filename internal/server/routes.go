@@ -16,7 +16,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/joho/godotenv"
 	"github.com/markbates/goth/gothic"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -29,12 +28,6 @@ var jwtSecret []byte
 
 
 func init() {
-	// Load .env file
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatalf("Error loading .env file")
-	}
-
 	// Read the secret from .env
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
