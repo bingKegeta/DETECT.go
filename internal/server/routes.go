@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"os"
 	"time"
+	"os/exec"
+	"math"
+	//"strconv"
 
 	"DETECT.go/internal/database"
 	"github.com/coder/websocket"
@@ -70,7 +73,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Get("/getSessions", handleGetUserSessions)
 	r.Get("/sessionAnalysis", handleGetAnalysis)
 	r.Post("/createSession", handleCreateSession)
-
+	r.Post("/processCoords", s.processCoordsHandler)
 
 	return r
 }
@@ -208,7 +211,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
         jsonErrorResponse(w, "Failed to generate token", http.StatusInternalServerError)
         return
     }
-	
+
     // Insert the JWT token into the database
     err = dbService.InsertUserToken(req.Email, signedToken)
     if err != nil {
@@ -226,7 +229,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
         Path:     "/",
         SameSite: http.SameSiteNoneMode,
     })
-	
+
     // Send response with JWT
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]interface{}{
@@ -289,7 +292,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
         jsonErrorResponse(w, "Failed to generate token", http.StatusInternalServerError)
         return
     }
-	
+
     // Insert the JWT token into the database
     err = dbService.InsertUserToken(req.Email, signedToken)
     if err != nil {
@@ -412,7 +415,6 @@ type Analysis struct {
 func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	// Extract token from cookies
 	cookie, err := r.Cookie("token")
 	if err != nil {
 		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
@@ -420,28 +422,24 @@ func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	token := cookie.Value
 
-	// Get the user email from the token
 	email, valid, err := dbService.GetUserByToken(token)
 	if err != nil || !valid {
 		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
 		return
 	}
 
-	// Retrieve user ID from email
 	userID, err := dbService.GetUserIDByEmail(email)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
 
-	// Retrieve sessions for this user
 	sessions, err := dbService.GetUserSessions(userID)
 	if err != nil {
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
-	// Encode the response as JSON
 	sessionsJSON, err := json.Marshal(sessions)
 	if err != nil {
 		http.Error(w, "Failed to encode sessions to JSON", http.StatusInternalServerError)
@@ -453,11 +451,9 @@ func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 	w.Write(sessionsJSON)
 }
 
-// HandleGetSessionAnalysis retrieves analysis data for a specific session
 func handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	// Decode JSON request body
 	var requestData struct {
 		SessionID int `json:"session_id"`
 	}
@@ -468,21 +464,18 @@ func handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch analysis data for the given session ID
 	analysisData, err := dbService.GetSessionAnalysis(requestData.SessionID)
 	if err != nil {
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
-	// Convert analysis data to JSON
 	analysisJSON, err := json.Marshal(analysisData)
 	if err != nil {
 		http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
 		return
 	}
 
-	// Send response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(analysisJSON)
@@ -491,7 +484,6 @@ func handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	// Retrieve the token from cookies
 	cookie, err := r.Cookie("token")
 	if err != nil {
 		http.Error(w, "Unauthorized: Token missing", http.StatusUnauthorized)
@@ -499,21 +491,18 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	token := cookie.Value
 
-	// Get user email using the token
 	email, valid, err := dbService.GetUserByToken(token)
 	if err != nil || !valid {
 		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
 		return
 	}
 
-	// Get user ID using the email
 	userID, err := dbService.GetUserIDByEmail(email)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
 
-	// Decode JSON request body
 	var requestData struct {
 		StartTime string  `json:"start_time"`
 		EndTime   string  `json:"end_time"`
@@ -527,14 +516,109 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create session in the database
 	err = dbService.CreateSession(userID, requestData.StartTime, requestData.EndTime, requestData.Min, requestData.Max)
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
 
-	// Send response
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte(`{"message": "Session created successfully"}`))
+}
+
+type AnalysisState struct {
+	LastX, LastY, LastTime, LastVelocity float64
+	Initialized                          bool
+}
+
+func clipAndScale(value, min, max float64) float64 {
+	valAbs := math.Abs(value)
+	clipped := math.Min(math.Max(valAbs, min), max)
+	return 0.01 + 0.95*(clipped/max)
+}
+
+func singleUpdate(state *AnalysisState, t, x, y float64) (float64, float64, float64) {
+	if !state.Initialized {
+		state.LastX, state.LastY, state.LastTime, state.LastVelocity = x, y, t, 0.0
+		state.Initialized = true
+		return 0.0, 0.0, 0.05
+	}
+	dt := t - state.LastTime
+	if dt <= 0.0 {
+		return 0.0, 0.0, 0.05
+	}
+	dx := x - state.LastX
+	dy := y - state.LastY
+	variance := dx*dx + dy*dy
+	velocity := math.Sqrt(variance) / dt
+	acceleration := (velocity - state.LastVelocity) / dt
+
+	varianceNorm := clipAndScale(variance, 4.5e-07, 0.00013)
+	accelerationNorm := clipAndScale(acceleration, 0.3, 10.0)
+	probability := (varianceNorm + accelerationNorm) / 2.0
+
+	state.LastX, state.LastY, state.LastTime, state.LastVelocity = x, y, t, velocity
+
+	return varianceNorm, accelerationNorm, probability
+}
+
+func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Timestamp   float64     `json:"timestamp"`
+		Coordinates [][]float64 `json:"coordinates"`
+	}
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		log.Printf("Error reading cookie: %v", err)
+		http.Error(w, "Token cookie not found", http.StatusUnauthorized)
+		return
+	}
+
+	token := cookie.Value
+	dbService := database.New()
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("JSON decode error: %v", err)
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil {
+		log.Printf("Error getting user by token: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !valid {
+		log.Printf("Invalid token")
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	log.Printf("Token belongs to user: %s", email)
+
+	state := &AnalysisState{}
+	var results []map[string]float64
+
+	for _, coord := range req.Coordinates {
+		if len(coord) != 2 {
+			continue
+		}
+		vn, an, prob := singleUpdate(state, req.Timestamp, coord[0], coord[1])
+		results = append(results, map[string]float64{
+			"variance":    vn,
+			"acceleration": an,
+			"probability":  prob,
+		})
+	}
+
+	respData, err := json.Marshal(results)
+	if err != nil {
+		log.Printf("JSON marshal error: %v", err)
+		http.Error(w, "Failed to process data", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respData)
 }
