@@ -59,6 +59,7 @@ var (
 	port       = os.Getenv("DB_PORT")
 	host       = os.Getenv("DB_HOST")
 	schema     = os.Getenv("DB_SCHEMA")
+	connection = os.Getenv("DB_CONNECTION")
 	dbInstance *service
 )
 
@@ -68,7 +69,8 @@ func New() Service {
 		return dbInstance
 	}
 
-	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s", username, password, host, port, database, schema)
+	// connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s", username, password, host, port, database, schema)
+	connStr := connection
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
         log.Fatalf("Failed to connect to database: %v", err)
