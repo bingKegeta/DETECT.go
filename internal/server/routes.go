@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"time"
-	"os/exec"
-	"math"
 
 	"DETECT.go/internal/database"
 	"github.com/coder/websocket"
