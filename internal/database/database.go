@@ -73,8 +73,20 @@ func New() Service {
 		return dbInstance
 	}
 
-	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s", username, password, host, port, database, schema)
-	// connStr := connection
+	// Check if DATABASE_URL is set (Railway usually provides it)
+    connStr := os.Getenv("DATABASE_URL")
+    if connStr == "" {
+        // Fallback to constructing the connection string from individual environment variables
+        username := os.Getenv("DB_USERNAME")
+        password := os.Getenv("DB_PASSWORD")
+        host := os.Getenv("DB_HOST")
+        port := os.Getenv("DB_PORT")
+        database := os.Getenv("DB_DATABASE")
+        schema := os.Getenv("DB_SCHEMA")
+        connStr = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s",
+            username, password, host, port, database, schema)
+    }
+	
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
         log.Fatalf("Failed to connect to database: %v", err)
