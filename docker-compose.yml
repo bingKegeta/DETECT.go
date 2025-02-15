@@ -6,42 +6,45 @@ services:
       target: prod
     restart: unless-stopped
     ports:
-      - ${PORT}:${PORT}
+      - "${PORT}:${PORT}"
     environment:
       APP_ENV: ${APP_ENV}
       PORT: ${PORT}
-      BLUEPRINT_DB_HOST: ${BLUEPRINT_DB_HOST}
-      BLUEPRINT_DB_PORT: ${BLUEPRINT_DB_PORT}
-      BLUEPRINT_DB_DATABASE: ${BLUEPRINT_DB_DATABASE}
-      BLUEPRINT_DB_USERNAME: ${BLUEPRINT_DB_USERNAME}
-      BLUEPRINT_DB_PASSWORD: ${BLUEPRINT_DB_PASSWORD}
-      BLUEPRINT_DB_SCHEMA: ${BLUEPRINT_DB_SCHEMA}
+      DB_HOST: psql_bp
+      DB_PORT: ${DB_PORT}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SCHEMA: ${DB_SCHEMA}
+      JWT_SECRET: ${JWT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      DB_CONNECTION: ${DB_CONNECTION}
+      CLIENT_URL: ${CLIENT_URL}
+      SERVER_URL: ${SERVER_URL}
     depends_on:
       psql_bp:
         condition: service_healthy
     networks:
-      - blueprint
+      - comm_channel
+
   psql_bp:
     image: postgres:latest
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${BLUEPRINT_DB_DATABASE}
-      POSTGRES_USER: ${BLUEPRINT_DB_USERNAME}
-      POSTGRES_PASSWORD: ${BLUEPRINT_DB_PASSWORD}
-    ports:
-      - "${BLUEPRINT_DB_PORT}:5432"
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - psql_volume_bp:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "sh -c 'pg_isready -U ${BLUEPRINT_DB_USERNAME} -d ${BLUEPRINT_DB_DATABASE}'"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 15s
+      retries: 5
     networks:
-      - blueprint
+      - comm_channel
 
-volumes:
-  psql_volume_bp:
 networks:
-  blueprint:
+  comm_channel:
+    driver: bridge
