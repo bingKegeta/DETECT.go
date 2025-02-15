@@ -86,6 +86,8 @@ func New() Service {
             username, password, host, port, database)
     }
 	
+	fmt.Println("Connection string:", connStr)
+	
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
         log.Fatalf("Failed to connect to database: %v", err)
