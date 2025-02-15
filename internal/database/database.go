@@ -83,7 +83,7 @@ func New() Service {
         port := os.Getenv("DB_PORT")
         database := os.Getenv("DB_DATABASE")
         schema := os.Getenv("DB_SCHEMA")
-        connStr = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s",
+        connStr = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=enable&search_path=%s",
             username, password, host, port, database, schema)
     }
 	
