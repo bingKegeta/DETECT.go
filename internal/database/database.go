@@ -73,8 +73,8 @@ func New() Service {
 		return dbInstance
 	}
 
-	// connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s", username, password, host, port, database, schema)
-	connStr := connection
+	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s", username, password, host, port, database, schema)
+	// connStr := connection
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
         log.Fatalf("Failed to connect to database: %v", err)
