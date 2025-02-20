@@ -54,6 +54,22 @@ type Service interface {
 	GetUserIDByEmail(email string) (int, error)
 
 	CreateSession(userID int, startTime, endTime string, min, max float64) error
+
+	UpdateMinMax(userID int, min, max float64) error
+
+	GetUserMinMax(userID int) (float64, float64, error)
+
+	InsertAnalysis(sessionID int, timestamp, x, y, prob float64) error
+
+	DeleteAnalysis(sessionID int) error
+
+	DeleteSession(sessionID int) error
+
+	UpdateSensitivity(userID int, newSensitivity float64) error
+
+	GetSensitivity(userID int) (float64, error)
+
+	AverageMinMax(userID int) error
 }
 
 type service struct {
@@ -342,6 +358,131 @@ func (s *service) CreateSession(userID int, startTime, endTime string, min, max 
 	_, err := s.db.Exec(query, userID, startTime, endTime, min, max)
 	if err != nil {
 		return fmt.Errorf("error inserting session: %v", err)
+	}
+
+	return nil
+}
+
+func (s *service) UpdateMinMax(userID int, min, max float64) error {
+	query := `UPDATE settings SET min = $1, max = $2 WHERE userid = $3`
+	result, err := s.db.Exec(query, min, max, userID)
+	if err != nil {
+		log.Printf("Database update error for user %d: %v", userID, err) // Debugging log
+		return fmt.Errorf("error updating min/max: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("Error checking affected rows for user %d: %v", userID, err)
+		return fmt.Errorf("error checking update status: %v", err)
+	}
+
+	if rowsAffected == 0 {
+		insertQuery := `INSERT INTO settings (userid, min, max, plotting, affine, min_max) VALUES ($1, $2, $3, false, false, false)`
+		_, err := s.db.Exec(insertQuery, userID, min, max)
+		if err != nil {
+			log.Printf("Database insert error for user %d: %v", userID, err)
+			return fmt.Errorf("error inserting min/max: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *service) GetUserMinMax(userID int) (float64, float64, error) {
+	var min, max float64
+
+	query := `SELECT min, max FROM settings WHERE userid = $1`
+	row := s.db.QueryRow(query, userID)
+
+	err := row.Scan(&min, &max)
+	if err != nil {
+		log.Printf("Error querying database for user %d: %v", userID, err) 
+		if err == sql.ErrNoRows {
+			return 0, 0, fmt.Errorf("settings not found for user")
+		}
+		return 0, 0, fmt.Errorf("error querying database: %v", err)
+	}
+
+	return min, max, nil
+}
+
+func (s *service) InsertAnalysis(sessionID int, timestamp, x, y, prob float64) error {
+	query := `INSERT INTO analysis (session_id, timestamp, x, y, prob, created_at) VALUES ($1, $2, $3, $4, $5, NOW())`
+	_, err := s.db.Exec(query, sessionID, timestamp, x, y, prob)
+	if err != nil {
+		log.Printf("Error inserting analysis data for session %d: %v", sessionID, err)
+		return fmt.Errorf("error inserting analysis data: %v", err)
+	}
+	return nil
+}
+
+func (s *service) DeleteAnalysis(sessionID int) error {
+	query := `DELETE FROM analysis WHERE session_id = $1`
+	_, err := s.db.Exec(query, sessionID)
+	if err != nil {
+		log.Printf("Error deleting analysis data for session %d: %v", sessionID, err)
+		return fmt.Errorf("failed to delete analysis data: %v", err)
+	}
+	return nil
+}
+
+func (s *service) DeleteSession(sessionID int) error {
+	err := s.DeleteAnalysis(sessionID)
+	if err != nil {
+		return fmt.Errorf("error deleting analysis before session deletion: %v", err)
+	}
+
+	query := `DELETE FROM session WHERE id = $1`
+	_, err = s.db.Exec(query, sessionID)
+	if err != nil {
+		log.Printf("Error deleting session %d: %v", sessionID, err)
+		return fmt.Errorf("failed to delete session: %v", err)
+	}
+	return nil
+}
+
+func (s *service) UpdateSensitivity(userID int, sensitivity float64) error {
+	query := `UPDATE settings SET sensitivity = $1 WHERE userid = $2`
+	_, err := s.db.Exec(query, sensitivity, userID)
+	if err != nil {
+		return fmt.Errorf("error updating sensitivity: %v", err)
+	}
+	return nil
+}
+
+func (s *service) GetSensitivity(userID int) (float64, error) {
+	var sensitivity float64
+
+	query := `SELECT sensitivity FROM settings WHERE userid = $1`
+	row := s.db.QueryRow(query, userID)
+
+	err := row.Scan(&sensitivity)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("sensitivity not found")
+		}
+		return 0, fmt.Errorf("error querying database: %v", err)
+	}
+
+	return sensitivity, nil
+}
+
+func (s *service) AverageMinMax(userID int) error {
+	var avgMin, avgMax float64
+
+	query := `SELECT COALESCE(AVG(min), 0), COALESCE(AVG(max), 0) FROM session WHERE user_id = $1`
+	row := s.db.QueryRow(query, userID)
+
+	err := row.Scan(&avgMin, &avgMax)
+	if err != nil {
+		return fmt.Errorf("error calculating average min/max: %v", err)
+	}
+
+	updateQuery := `UPDATE settings SET min = $1, max = $2 WHERE userid = $3`
+	_, err = s.db.Exec(updateQuery, avgMin, avgMax, userID)
+	if err != nil {
+		return fmt.Errorf("error updating settings: %v", err)
 	}
 
 	return nil
