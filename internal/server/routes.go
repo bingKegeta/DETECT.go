@@ -74,6 +74,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Get("/sessionAnalysis", handleGetAnalysis)
 	r.Post("/createSession", handleCreateSession)
 	r.Post("/processCoords", s.processCoordsHandler)
+	r.Post("/postProcessing", s.handlePostAnalysis)
 	r.Post("/updateMinMax", handleUpdateMinMax)
 	r.Get("/getMinMax", handleGetMinMax)
 	r.Post("/updateSessionAnalysis", handleInsertAnalysis)
@@ -545,7 +546,7 @@ func clipAndScale(value, min, max float64) float64 {
 	return 0.01 + 0.95*(clipped/max)
 }
 
-func singleUpdate(state *AnalysisState, t, x, y float64) (float64, float64, float64) {
+func singleUpdate(state *AnalysisState, t, x, y, min, max float64) (float64, float64, float64) {
 	if !state.Initialized {
 		state.LastX, state.LastY, state.LastTime, state.LastVelocity = x, y, t, 0.0
 		state.Initialized = true
@@ -561,8 +562,8 @@ func singleUpdate(state *AnalysisState, t, x, y float64) (float64, float64, floa
 	velocity := math.Sqrt(variance) / dt
 	acceleration := (velocity - state.LastVelocity) / dt
 
-	varianceNorm := clipAndScale(variance, 4.5e-07, 0.00013)
-	accelerationNorm := clipAndScale(acceleration, 0.3, 10.0)
+	varianceNorm := clipAndScale(variance, min, max)
+	accelerationNorm := clipAndScale(acceleration, min, max)
 	probability := (varianceNorm + accelerationNorm) / 2.0
 
 	state.LastX, state.LastY, state.LastTime, state.LastVelocity = x, y, t, velocity
@@ -612,7 +613,78 @@ func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 		if len(coord) != 2 {
 			continue
 		}
-		vn, an, prob := singleUpdate(state, req.Timestamp, coord[0], coord[1])
+		vn, an, prob := singleUpdate(state, req.Timestamp, coord[0], coord[1], 4.5e-07, 0.00013)
+		results = append(results, map[string]float64{
+			"variance":    vn,
+			"acceleration": an,
+			"probability":  prob,
+		})
+	}
+
+	respData, err := json.Marshal(results)
+	if err != nil {
+		log.Printf("JSON marshal error: %v", err)
+		http.Error(w, "Failed to process data", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respData)
+}
+
+func (s *Server) handlePostAnalysis(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Timestamp   float64     `json:"timestamp"`
+		Coordinates [][]float64 `json:"coordinates"`
+	}
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		log.Printf("Error reading cookie: %v", err)
+		http.Error(w, "Token cookie not found", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	dbService := database.New()
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil {
+		log.Printf("Error getting user by token: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !valid {
+		log.Printf("Invalid token")
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	min, max, err := dbService.GetUserMinMax(userID)
+	if err != nil {
+		http.Error(w, "Failed to retrieve settings", http.StatusInternalServerError)
+		return
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("JSON decode error: %v", err)
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	state := &AnalysisState{}
+	var results []map[string]float64
+
+	for _, coord := range req.Coordinates {
+		if len(coord) != 2 {
+			continue
+		}
+		vn, an, prob := singleUpdate(state, req.Timestamp, coord[0], coord[1], min, max)
 		results = append(results, map[string]float64{
 			"variance":    vn,
 			"acceleration": an,
