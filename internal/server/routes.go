@@ -81,6 +81,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Post("/updateSensitivity", handleUpdateSensitivity)
 	r.Get("/getSensitivity", handleGetSensitivity)
 	r.Post("/averageMinMax", handleAverageMinMax)
+	r.Post("/setMinMax", handleSetMinMax)
 
 	return r
 }
@@ -874,4 +875,77 @@ func handleAverageMinMax(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "Min/Max values updated successfully"})
+}
+
+func handleUpdateMinMax(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	err = dbService.UpdateUserMinMax(userID)
+	if err != nil {
+		http.Error(w, "Failed to update min/max settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Min/Max values updated successfully"})
+}
+
+func handleSetMinMax(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	var requestBody struct {
+		MinMax bool `json:"min_max"`
+	}
+	err = json.NewDecoder(r.Body).Decode(&requestBody)
+	if err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	err = dbService.UpdateMinMaxSetting(userID, requestBody.MinMax)
+	if err != nil {
+		http.Error(w, "Failed to update min_max setting", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Settings updated successfully"})
 }
