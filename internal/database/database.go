@@ -70,6 +70,10 @@ type Service interface {
 	GetSensitivity(userID int) (float64, error)
 
 	AverageMinMax(userID int) error
+
+	UpdateUserMinMax(userID int) error
+
+	UpdateMinMaxSetting(userID int, minMax bool) error
 }
 
 type service struct {
@@ -483,6 +487,65 @@ func (s *service) AverageMinMax(userID int) error {
 	_, err = s.db.Exec(updateQuery, avgMin, avgMax, userID)
 	if err != nil {
 		return fmt.Errorf("error updating settings: %v", err)
+	}
+
+	return nil
+}
+
+func (s *service) UpdateUserMinMax(userID int) error {
+	var useAverage bool
+
+	query := `SELECT min_max FROM settings WHERE userid = $1`
+	row := s.db.QueryRow(query, userID)
+
+	err := row.Scan(&useAverage)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("Settings not found for user")
+		}
+		return fmt.Errorf("Error querying settings: %v", err)
+	}
+
+	if useAverage {
+		return s.AverageMinMax(userID)
+	} else {
+		var recentMin, recentMax float64
+
+		recentQuery := `
+			SELECT min, max FROM session
+			WHERE user_id = $1
+			ORDER BY created_at DESC
+			LIMIT 1`
+		recentRow := s.db.QueryRow(recentQuery, userID)
+
+		err := recentRow.Scan(&recentMin, &recentMax)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("No sessions found for user")
+			}
+			return fmt.Errorf("Error retrieving recent session data: %v", err)
+		}
+
+		return s.UpdateMinMax(userID, recentMin, recentMax)
+	}
+}
+
+func (s *service) UpdateMinMaxSetting(userID int, minMax bool) error {
+	query := `UPDATE settings SET min_max = $1 WHERE userid = $2`
+	result, err := s.db.Exec(query, minMax, userID)
+	if err != nil {
+		log.Printf("Database update error for user %d: %v", userID, err)
+		return fmt.Errorf("error updating min_max setting: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("Error checking affected rows for user %d: %v", userID, err)
+		return fmt.Errorf("Error checking update status: %v", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("No settings found for user")
 	}
 
 	return nil
