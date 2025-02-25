@@ -5,17 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"DETECT.go/internal/database"
-	"DETECT.go/internal/websocket"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/joho/godotenv"
+	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
 	"github.com/markbates/goth/gothic"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -27,12 +29,6 @@ var jwtSecret []byte
 */
 
 func init() {
-	// Load .env file
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatalf("Error loading .env file")
-	}
-
 	// Read the secret from .env
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
@@ -59,30 +55,33 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	r.Get("/", s.HelloWorldHandler)
 	r.Get("/health", s.healthHandler)
+	r.Get("/websocket", WebSocketHandler)
 	r.Post("/login", s.handleLogin)
 	r.Post("/register", s.handleRegister)
 	r.Get("/auth/{provider}", s.startAuth)
 	r.Get("/auth/{provider}/callback", s.getAuthCallback)
 	r.Get("/logout", s.logout)
 	r.Get("/users", handleGetUsers)
-	r.Get("/ws", s.websocketHandler)
+	r.Post("/processCoords", s.processCoordsHandler)
+	r.Post("/createSession", handleCreateSession)
+	r.Post("/updateMinMax", handleUpdateMinMax)
+	r.Get("/getMinMax", handleGetMinMax)
+	r.Post("/updateSessionAnalysis", handleInsertAnalysis)
+	r.Post("/deleteSession", handleDeleteSession)
+	r.Post("/updateSensitivity", handleUpdateSensitivity)
+	r.Get("/getSensitivity", handleGetSensitivity)
+	r.Post("/averageMinMax", handleAverageMinMax)
 
 	return r
 }
 
-func (s *Server) websocketHandler(w http.ResponseWriter, r *http.Request) {
-	// Start the WebSocket server (in a new goroutine to prevent blocking)
-	go func() {
-		err := websocket.StartServer()
-		if err != nil {
-			log.Fatalf("Error starting WebSocket server: %v", err)
-		}
-	}()
+func SetupRoutes() *mux.Router {
+	router := mux.NewRouter()
 
-	// Send a simple response to indicate that the WebSocket server is running
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "WebSocket server started on ws://localhost:9090"})
+	// WebSocket endpoint
+	router.HandleFunc("/ws", WebSocketHandler)
+
+	return router
 }
 
 func (s *Server) HelloWorldHandler(w http.ResponseWriter, r *http.Request) {
@@ -375,4 +374,423 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, os.Getenv("CLIENT_URL")+"/", http.StatusFound)
+}
+
+type AnalysisState struct {
+	LastX, LastY, LastTime, LastVelocity float64
+	Initialized                          bool
+}
+
+func clipAndScale(value, min, max float64) float64 {
+	valAbs := math.Abs(value)
+	clipped := math.Min(math.Max(valAbs, min), max)
+	return 0.01 + 0.95*(clipped/max)
+}
+
+func singleUpdate(state *AnalysisState, t, x, y float64) (float64, float64, float64) {
+	if !state.Initialized {
+		state.LastX, state.LastY, state.LastTime, state.LastVelocity = x, y, t, 0.0
+		state.Initialized = true
+		return 0.0, 0.0, 0.05
+	}
+	dt := t - state.LastTime
+	if dt <= 0.0 {
+		return 0.0, 0.0, 0.05
+	}
+	dx := x - state.LastX
+	dy := y - state.LastY
+	variance := dx*dx + dy*dy
+	velocity := math.Sqrt(variance) / dt
+	acceleration := (velocity - state.LastVelocity) / dt
+
+	varianceNorm := clipAndScale(variance, 4.5e-07, 0.00013)
+	accelerationNorm := clipAndScale(acceleration, 0.3, 10.0)
+	probability := (varianceNorm + accelerationNorm) / 2.0
+
+	state.LastX, state.LastY, state.LastTime, state.LastVelocity = x, y, t, velocity
+
+	return varianceNorm, accelerationNorm, probability
+}
+
+func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Timestamp   float64     `json:"timestamp"`
+		Coordinates [][]float64 `json:"coordinates"`
+	}
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		log.Printf("Error reading cookie: %v", err)
+		http.Error(w, "Token cookie not found", http.StatusUnauthorized)
+		return
+	}
+
+	token := cookie.Value
+	dbService := database.New()
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("JSON decode error: %v", err)
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil {
+		log.Printf("Error getting user by token: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !valid {
+		log.Printf("Invalid token")
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	log.Printf("Token belongs to user: %s", email)
+
+	state := &AnalysisState{}
+	var results []map[string]float64
+
+	for _, coord := range req.Coordinates {
+		if len(coord) != 2 {
+			continue
+		}
+		vn, an, prob := singleUpdate(state, req.Timestamp, coord[0], coord[1])
+		results = append(results, map[string]float64{
+			"variance":     vn,
+			"acceleration": an,
+			"probability":  prob,
+		})
+	}
+
+	respData, err := json.Marshal(results)
+	if err != nil {
+		log.Printf("JSON marshal error: %v", err)
+		http.Error(w, "Failed to process data", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respData)
+}
+
+func handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Token missing", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	var reqData struct {
+		StartTime string  `json:"start_time"`
+		EndTime   string  `json:"end_time"`
+		Min       float64 `json:"min"`
+		Max       float64 `json:"max"`
+	}
+
+	err = json.NewDecoder(r.Body).Decode(&reqData)
+	if err != nil {
+		http.Error(w, "Invalid JSON input", http.StatusBadRequest)
+		return
+	}
+
+	err = dbService.CreateSession(userID, reqData.StartTime, reqData.EndTime, reqData.Min, reqData.Max)
+	if err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert userID to string
+	userIDStr := strconv.Itoa(userID)
+
+	// Construct WebSocket message
+	sessionData := map[string]interface{}{
+		"type":       "session_created",
+		"user_id":    userID,
+		"start_time": reqData.StartTime,
+		"end_time":   reqData.EndTime,
+		"min":        reqData.Min,
+		"max":        reqData.Max,
+	}
+
+	sessionJSON, err := json.Marshal(sessionData)
+	if err != nil {
+		log.Println("Failed to serialize session data:", err)
+	} else {
+		// Send message to WebSocket client (if connected)
+		manager.mu.Lock()
+		clientConn, exists := manager.clients[userIDStr] // Use string version
+		manager.mu.Unlock()
+
+		if exists {
+			go func() {
+				if err := clientConn.WriteMessage(websocket.TextMessage, sessionJSON); err != nil {
+					log.Println("Failed to send WebSocket message:", err)
+				}
+			}()
+		}
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(`{"message": "Session created successfully"}`))
+}
+
+func handleUpdateMinMax(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	var requestData struct {
+		Values []int `json:"values"`
+	}
+
+	err = json.NewDecoder(r.Body).Decode(&requestData)
+	if err != nil || len(requestData.Values) == 0 {
+		http.Error(w, "Invalid JSON input", http.StatusBadRequest)
+		return
+	}
+
+	minVal, maxVal := requestData.Values[0], requestData.Values[0]
+	for _, val := range requestData.Values {
+		if val < minVal {
+			minVal = val
+		}
+		if val > maxVal {
+			maxVal = val
+		}
+	}
+
+	err = dbService.UpdateMinMax(userID, float64(minVal), float64(maxVal))
+	if err != nil {
+		http.Error(w, "Failed to update settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message": "Min and Max updated successfully"}`))
+}
+
+func handleGetMinMax(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	min, max, err := dbService.GetUserMinMax(userID)
+	if err != nil {
+		http.Error(w, "Failed to retrieve min/max settings", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]float64{
+		"min": min,
+		"max": max,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleInsertAnalysis(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	var requestData struct {
+		SessionID int     `json:"session_id"`
+		Timestamp float64 `json:"timestamp"`
+		X         float64 `json:"x"`
+		Y         float64 `json:"y"`
+		Prob      float64 `json:"prob"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&requestData)
+	if err != nil {
+		http.Error(w, "Invalid JSON input", http.StatusBadRequest)
+		return
+	}
+
+	err = dbService.InsertAnalysis(requestData.SessionID, requestData.Timestamp, requestData.X, requestData.Y, requestData.Prob)
+	if err != nil {
+		http.Error(w, "Failed to insert analysis data", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(`{"message": "Analysis data inserted successfully"}`))
+}
+
+func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	var requestData struct {
+		SessionID int `json:"session_id"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&requestData)
+	if err != nil {
+		http.Error(w, "Invalid JSON input", http.StatusBadRequest)
+		return
+	}
+
+	err = dbService.DeleteSession(requestData.SessionID)
+	if err != nil {
+		http.Error(w, "Failed to delete session", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message": "Session deleted successfully"}`))
+}
+
+func handleUpdateSensitivity(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	var requestData struct {
+		Sensitivity float64 `json:"sensitivity"`
+	}
+	err = json.NewDecoder(r.Body).Decode(&requestData)
+	if err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	err = dbService.UpdateSensitivity(userID, requestData.Sensitivity)
+	if err != nil {
+		http.Error(w, "Failed to update sensitivity", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message": "Sensitivity updated successfully"}`))
+}
+
+func handleGetSensitivity(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	sensitivity, err := dbService.GetSensitivity(userID)
+	if err != nil {
+		http.Error(w, "Failed to retrieve sensitivity", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]float64{"sensitivity": sensitivity}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleAverageMinMax(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	err = dbService.AverageMinMax(userID)
+	if err != nil {
+		http.Error(w, "Failed to update min/max settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Min/Max values updated successfully"})
 }
