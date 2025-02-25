@@ -75,13 +75,14 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Post("/createSession", handleCreateSession)
 	r.Post("/processCoords", s.processCoordsHandler)
 	r.Post("/postProcessing", s.handlePostAnalysis)
-	r.Post("/updateMinMax", handleUpdateMinMax)
-	r.Get("/getMinMax", handleGetMinMax)
+	r.Post("/updateMinMaxVar", handleUpdateMinMaxVar)
+	r.Get("/getMinMaxVar", handleGetMinMaxVar)
+	r.Post("/updateMinMaxAcc", handleUpdateMinMaxAcc)
+	r.Get("/getMinMaxAcc", handleGetMinMaxAcc)
 	r.Post("/updateSessionAnalysis", handleInsertAnalysis)
 	r.Post("/deleteSession", handleDeleteSession)
 	r.Post("/updateSensitivity", handleUpdateSensitivity)
 	r.Get("/getSensitivity", handleGetSensitivity)
-	r.Post("/averageMinMax", handleAverageMinMax)
 	r.Post("/setMinMax", handleSetMinMax)
 
 	return r
@@ -290,6 +291,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err = dbService.InsertSettings(userID, 4.5e-07, 0.00013, 0.3, 10.0)
+  	if err != nil {
+      		jsonErrorResponse(w, "Failed to create settings for user", http.StatusInternalServerError)
+      		return
+  	}
+
 	// Generate JWT token
     claims := &jwt.RegisteredClaims{
         Subject:   req.Email,
@@ -421,6 +428,36 @@ type Analysis struct {
 	CreatedAt string  `json:"created_at"`
 }
 
+func handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	var requestData struct {
+		SessionID int `json:"session_id"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&requestData)
+	if err != nil {
+		http.Error(w, "Invalid JSON input", http.StatusBadRequest)
+		return
+	}
+
+	analysisData, err := dbService.GetSessionAnalysis(requestData.SessionID)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	analysisJSON, err := json.Marshal(analysisData)
+	if err != nil {
+		http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(analysisJSON)
+}
+
 func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
@@ -460,36 +497,6 @@ func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 	w.Write(sessionsJSON)
 }
 
-func handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
-	dbService := database.New()
-
-	var requestData struct {
-		SessionID int `json:"session_id"`
-	}
-
-	err := json.NewDecoder(r.Body).Decode(&requestData)
-	if err != nil {
-		http.Error(w, "Invalid JSON input", http.StatusBadRequest)
-		return
-	}
-
-	analysisData, err := dbService.GetSessionAnalysis(requestData.SessionID)
-	if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-
-	analysisJSON, err := json.Marshal(analysisData)
-	if err != nil {
-		http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(analysisJSON)
-}
-
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
@@ -515,8 +522,10 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var requestData struct {
 		StartTime string  `json:"start_time"`
 		EndTime   string  `json:"end_time"`
-		Min       float64 `json:"min"`
-		Max       float64 `json:"max"`
+		VarMin       float64 `json:"var_min"`
+		VarMax       float64 `json:"var_max"`
+		AccMin       float64 `json:"acc_min"`
+		AccMax       float64 `json:"acc_max"`
 	}
 
 	err = json.NewDecoder(r.Body).Decode(&requestData)
@@ -525,7 +534,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = dbService.CreateSession(userID, requestData.StartTime, requestData.EndTime, requestData.Min, requestData.Max)
+	err = dbService.CreateSession(userID, requestData.StartTime, requestData.EndTime, requestData.VarMin, requestData.VarMax, requestData.AccMin, requestData.AccMax)
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
@@ -546,12 +555,13 @@ func clipAndScale(value, min, max float64) float64 {
 	return 0.01 + 0.95*(clipped/max)
 }
 
-func singleUpdate(state *AnalysisState, t, x, y, min, max float64) (float64, float64, float64) {
+func singleUpdate(state *AnalysisState, t, x, y, varMin, varMax, accMin, accMax float64) (float64, float64, float64) {
 	if !state.Initialized {
 		state.LastX, state.LastY, state.LastTime, state.LastVelocity = x, y, t, 0.0
 		state.Initialized = true
 		return 0.0, 0.0, 0.05
 	}
+
 	dt := t - state.LastTime
 	if dt <= 0.0 {
 		return 0.0, 0.0, 0.05
@@ -562,8 +572,8 @@ func singleUpdate(state *AnalysisState, t, x, y, min, max float64) (float64, flo
 	velocity := math.Sqrt(variance) / dt
 	acceleration := (velocity - state.LastVelocity) / dt
 
-	varianceNorm := clipAndScale(variance, min, max)
-	accelerationNorm := clipAndScale(acceleration, min, max)
+	varianceNorm := clipAndScale(variance, varMin, varMax)
+	accelerationNorm := clipAndScale(acceleration, accMin, accMax)
 	probability := (varianceNorm + accelerationNorm) / 2.0
 
 	state.LastX, state.LastY, state.LastTime, state.LastVelocity = x, y, t, velocity
@@ -613,7 +623,7 @@ func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 		if len(coord) != 2 {
 			continue
 		}
-		vn, an, prob := singleUpdate(state, req.Timestamp, coord[0], coord[1], 4.5e-07, 0.00013)
+		vn, an, prob := singleUpdate(state, req.Timestamp, coord[0], coord[1], 4.5e-07, 0.00013, 0.3, 10.0)
 		results = append(results, map[string]float64{
 			"variance":    vn,
 			"acceleration": an,
@@ -665,9 +675,15 @@ func (s *Server) handlePostAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	min, max, err := dbService.GetUserMinMax(userID)
+	varMin, varMax, err := dbService.GetUserMinMaxVar(userID)
 	if err != nil {
-		http.Error(w, "Failed to retrieve settings", http.StatusInternalServerError)
+		http.Error(w, "Failed to retrieve variance min/max", http.StatusInternalServerError)
+		return
+	}
+
+	accMin, accMax, err := dbService.GetUserMinMaxAcc(userID)
+	if err != nil {
+		http.Error(w, "Failed to retrieve acceleration min/max", http.StatusInternalServerError)
 		return
 	}
 
@@ -684,9 +700,9 @@ func (s *Server) handlePostAnalysis(w http.ResponseWriter, r *http.Request) {
 		if len(coord) != 2 {
 			continue
 		}
-		vn, an, prob := singleUpdate(state, req.Timestamp, coord[0], coord[1], min, max)
+		vn, an, prob := singleUpdate(state, req.Timestamp, coord[0], coord[1], varMin, varMax, accMin, accMax)
 		results = append(results, map[string]float64{
-			"variance":    vn,
+			"variance":     vn,
 			"acceleration": an,
 			"probability":  prob,
 		})
@@ -701,96 +717,6 @@ func (s *Server) handlePostAnalysis(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(respData)
-}
-
-func handleUpdateMinMax(w http.ResponseWriter, r *http.Request) {
-	dbService := database.New()
-
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
-	var requestData struct {
-		Values []int `json:"values"`
-	}
-
-	err = json.NewDecoder(r.Body).Decode(&requestData)
-	if err != nil || len(requestData.Values) == 0 {
-		http.Error(w, "Invalid JSON input", http.StatusBadRequest)
-		return
-	}
-
-	minVal, maxVal := requestData.Values[0], requestData.Values[0]
-	for _, val := range requestData.Values {
-		if val < minVal {
-			minVal = val
-		}
-		if val > maxVal {
-			maxVal = val
-		}
-	}
-
-	err = dbService.UpdateMinMax(userID, float64(minVal), float64(maxVal))
-	if err != nil {
-		http.Error(w, "Failed to update settings", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"message": "Min and Max updated successfully"}`))
-}
-
-func handleGetMinMax(w http.ResponseWriter, r *http.Request) {
-	dbService := database.New()
-
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
-	min, max, err := dbService.GetUserMinMax(userID)
-	if err != nil {
-		http.Error(w, "Failed to retrieve min/max settings", http.StatusInternalServerError)
-		return
-	}
-
-	response := map[string]float64{
-		"min": min,
-		"max": max,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
 }
 
 func handleInsertAnalysis(w http.ResponseWriter, r *http.Request) {
@@ -917,7 +843,7 @@ func handleGetSensitivity(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func handleAverageMinMax(w http.ResponseWriter, r *http.Request) {
+func handleUpdateMinMaxVar(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	cookie, err := r.Cookie("token")
@@ -939,17 +865,17 @@ func handleAverageMinMax(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = dbService.AverageMinMax(userID)
+	err = dbService.UpdateUserMinMaxVar(userID)
 	if err != nil {
-		http.Error(w, "Failed to update min/max settings", http.StatusInternalServerError)
+		http.Error(w, "Failed to update variance min/max settings", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "Min/Max values updated successfully"})
+	json.NewEncoder(w).Encode(map[string]string{"message": "Variance min/max values updated successfully"})
 }
 
-func handleUpdateMinMax(w http.ResponseWriter, r *http.Request) {
+func handleGetMinMaxVar(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	cookie, err := r.Cookie("token")
@@ -971,14 +897,90 @@ func handleUpdateMinMax(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = dbService.UpdateUserMinMax(userID)
+	varMin, varMax, err := dbService.GetUserMinMaxVar(userID)
 	if err != nil {
-		http.Error(w, "Failed to update min/max settings", http.StatusInternalServerError)
+		http.Error(w, "Failed to retrieve variance min/max settings", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]float64{
+		"var_min": varMin,
+		"var_max": varMax,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleUpdateMinMaxAcc(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	err = dbService.UpdateUserMinMaxAcc(userID)
+	if err != nil {
+		http.Error(w, "Failed to update acceleration min/max settings", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "Min/Max values updated successfully"})
+	json.NewEncoder(w).Encode(map[string]string{"message": "Acceleration min/max values updated successfully"})
+}
+
+func handleGetMinMaxAcc(w http.ResponseWriter, r *http.Request) {
+	dbService := database.New()
+
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+		return
+	}
+	token := cookie.Value
+
+	email, valid, err := dbService.GetUserByToken(token)
+	if err != nil || !valid {
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := dbService.GetUserIDByEmail(email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	accMin, accMax, err := dbService.GetUserMinMaxAcc(userID)
+	if err != nil {
+		http.Error(w, "Failed to retrieve acceleration min/max settings", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]float64{
+		"acc_min": accMin,
+		"acc_max": accMax,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
 func handleSetMinMax(w http.ResponseWriter, r *http.Request) {
