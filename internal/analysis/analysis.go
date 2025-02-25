@@ -10,19 +10,27 @@ var (
 	mu                                   sync.Mutex
 )
 
+// ClipAndScale ensures values are clipped and normalized for output
 func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
 	valAbs := math.Abs(value)
 	clipped := math.Min(math.Max(valAbs, min), max)
 	return scaleMin + (scaleMax-scaleMin)*(clipped/max)
 }
 
+// AnalyzeGazeData processes gaze data and computes movement metrics
 func AnalyzeGazeData(time, x, y float64) (varianceNorm, accelerationNorm, probability float64) {
 	mu.Lock()
 	defer mu.Unlock()
 
+	// Reset tracking if time goes backward (possible page refresh)
+	if time < lastTime {
+		lastX, lastY, lastTime, lastVelocity = 0, 0, 0, 0
+	}
+
+	// Initialize on first valid input
 	if lastTime == 0 {
 		lastX, lastY, lastTime, lastVelocity = x, y, time, 0.0
-		return 0.0, 0.0, 0.05 // default for first detection
+		return 0.0, 0.0, 0.05 // Default for first detection
 	}
 
 	dt := time - lastTime
