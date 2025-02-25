@@ -53,7 +53,7 @@ type Service interface {
 
 	GetUserIDByEmail(email string) (int, error)
 
-	CreateSession(userID int, startTime, endTime string, min, max float64) error
+	CreateSession(userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) error
 
 	UpdateMinMax(userID int, min, max float64) error
 
@@ -69,11 +69,25 @@ type Service interface {
 
 	GetSensitivity(userID int) (float64, error)
 
-	AverageMinMax(userID int) error
+	GetUserMinMaxVar(userID int) (float64, float64, error)
 
-	UpdateUserMinMax(userID int) error
+	GetUserMinMaxAcc(userID int) (float64, float64, error)
+
+	AverageMinMaxVar(userID int) error
+
+	AverageMinMaxAcc(userID int) error
+
+	UpdateMinMaxVar(userID int, min, max float64) error
+
+	UpdateMinMaxAcc(userID int, min, max float64) error
+
+	UpdateUserMinMaxVar(userID int) error
+
+	UpdateUserMinMaxAcc(userID int) error
 
 	UpdateMinMaxSetting(userID int, minMax bool) error
+
+	InsertSettings(userID int, varMin, varMax, accMin, accMax float64) error
 }
 
 type service struct {
@@ -282,8 +296,10 @@ type Session struct {
 	UserID    int
 	StartTime string
 	EndTime   string
-	Min       float64
-	Max       float64
+	VarMin       float64
+	VarMax       float64
+	AccMin       float64
+	AccMax       float64
 	CreatedAt string
 }
 
@@ -299,7 +315,7 @@ type Analysis struct {
 func (s *service) GetUserSessions(userID int) ([]Session, error) {
 	var sessions []Session
 
-	query := `SELECT user_id, start_time, end_time, min, max, created_at FROM session WHERE user_id = $1 ORDER BY start_time DESC`
+	query := `SELECT user_id, start_time, end_time, var_min, var_max, acc_min, acc_max, created_at FROM session WHERE user_id = $1 ORDER BY start_time DESC`
 	rows, err := s.db.Query(query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("error querying database: %v", err)
@@ -308,7 +324,7 @@ func (s *service) GetUserSessions(userID int) ([]Session, error) {
 
 	for rows.Next() {
 		var ses Session
-		err := rows.Scan(&ses.UserID, &ses.StartTime, &ses.EndTime, &ses.Min, &ses.Max, &ses.CreatedAt)
+		err := rows.Scan(&ses.UserID, &ses.StartTime, &ses.EndTime, &ses.VarMin, &ses.VarMax, &ses.AccMin, &ses.AccMax, &ses.CreatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("error scanning row: %v", err)
 		}
@@ -357,58 +373,14 @@ func (s *service) GetUserIDByEmail(email string) (int, error) {
 	return userID, nil
 }
 
-func (s *service) CreateSession(userID int, startTime, endTime string, min, max float64) error {
-	query := `INSERT INTO session (user_id, start_time, end_time, min, max) VALUES ($1, $2, $3, $4, $5)`
-	_, err := s.db.Exec(query, userID, startTime, endTime, min, max)
+func (s *service) CreateSession(userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) error {
+	query := `INSERT INTO session (user_id, start_time, end_time, var_min, var_max, acc_min, acc_max) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	_, err := s.db.Exec(query, userID, startTime, endTime, v_min, v_max, a_min, a_max)
 	if err != nil {
 		return fmt.Errorf("error inserting session: %v", err)
 	}
 
 	return nil
-}
-
-func (s *service) UpdateMinMax(userID int, min, max float64) error {
-	query := `UPDATE settings SET min = $1, max = $2 WHERE userid = $3`
-	result, err := s.db.Exec(query, min, max, userID)
-	if err != nil {
-		log.Printf("Database update error for user %d: %v", userID, err) // Debugging log
-		return fmt.Errorf("error updating min/max: %v", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		log.Printf("Error checking affected rows for user %d: %v", userID, err)
-		return fmt.Errorf("error checking update status: %v", err)
-	}
-
-	if rowsAffected == 0 {
-		insertQuery := `INSERT INTO settings (userid, min, max, plotting, affine, min_max) VALUES ($1, $2, $3, false, false, false)`
-		_, err := s.db.Exec(insertQuery, userID, min, max)
-		if err != nil {
-			log.Printf("Database insert error for user %d: %v", userID, err)
-			return fmt.Errorf("error inserting min/max: %v", err)
-		}
-	}
-
-	return nil
-}
-
-func (s *service) GetUserMinMax(userID int) (float64, float64, error) {
-	var min, max float64
-
-	query := `SELECT min, max FROM settings WHERE userid = $1`
-	row := s.db.QueryRow(query, userID)
-
-	err := row.Scan(&min, &max)
-	if err != nil {
-		log.Printf("Error querying database for user %d: %v", userID, err) 
-		if err == sql.ErrNoRows {
-			return 0, 0, fmt.Errorf("settings not found for user")
-		}
-		return 0, 0, fmt.Errorf("error querying database: %v", err)
-	}
-
-	return min, max, nil
 }
 
 func (s *service) InsertAnalysis(sessionID int, timestamp, x, y, prob float64) error {
@@ -472,27 +444,174 @@ func (s *service) GetSensitivity(userID int) (float64, error) {
 	return sensitivity, nil
 }
 
-func (s *service) AverageMinMax(userID int) error {
-	var avgMin, avgMax float64
+func (s *service) GetUserMinMaxVar(userID int) (float64, float64, error) {
+	var varMin, varMax float64
 
-	query := `SELECT COALESCE(AVG(min), 0), COALESCE(AVG(max), 0) FROM session WHERE user_id = $1`
+	query := `SELECT var_min, var_max FROM settings WHERE userid = $1`
 	row := s.db.QueryRow(query, userID)
 
-	err := row.Scan(&avgMin, &avgMax)
+	err := row.Scan(&varMin, &varMax)
 	if err != nil {
-		return fmt.Errorf("error calculating average min/max: %v", err)
+		log.Printf("Error querying variance min/max for user %d: %v", userID, err)
+		if err == sql.ErrNoRows {
+			return 0, 0, fmt.Errorf("settings not found for user")
+		}
+		return 0, 0, fmt.Errorf("error querying database: %v", err)
 	}
 
-	updateQuery := `UPDATE settings SET min = $1, max = $2 WHERE userid = $3`
-	_, err = s.db.Exec(updateQuery, avgMin, avgMax, userID)
+	return varMin, varMax, nil
+}
+
+func (s *service) GetUserMinMaxAcc(userID int) (float64, float64, error) {
+	var accMin, accMax float64
+
+	query := `SELECT acc_min, acc_max FROM settings WHERE userid = $1`
+	row := s.db.QueryRow(query, userID)
+
+	err := row.Scan(&accMin, &accMax)
 	if err != nil {
-		return fmt.Errorf("error updating settings: %v", err)
+		log.Printf("Error querying acceleration min/max for user %d: %v", userID, err)
+		if err == sql.ErrNoRows {
+			return 0, 0, fmt.Errorf("settings not found for user")
+		}
+		return 0, 0, fmt.Errorf("error querying database: %v", err)
+	}
+
+	return accMin, accMax, nil
+}
+
+func (s *service) AverageMinMaxVar(userID int) error {
+	var avgVarMin, avgVarMax float64
+
+	query := `SELECT COALESCE(AVG(var_min), 0), COALESCE(AVG(var_max), 0) FROM session WHERE user_id = $1`
+	row := s.db.QueryRow(query, userID)
+
+	err := row.Scan(&avgVarMin, &avgVarMax)
+	if err != nil {
+		return fmt.Errorf("error calculating average variance min/max: %v", err)
+	}
+
+	updateQuery := `UPDATE settings SET var_min = $1, var_max = $2 WHERE userid = $3`
+	_, err = s.db.Exec(updateQuery, avgVarMin, avgVarMax, userID)
+	if err != nil {
+		return fmt.Errorf("error updating variance min/max: %v", err)
 	}
 
 	return nil
 }
 
-func (s *service) UpdateUserMinMax(userID int) error {
+func (s *service) AverageMinMaxAcc(userID int) error {
+	var avgAccMin, avgAccMax float64
+
+	query := `SELECT COALESCE(AVG(acc_min), 0), COALESCE(AVG(acc_max), 0) FROM session WHERE user_id = $1`
+	row := s.db.QueryRow(query, userID)
+
+	err := row.Scan(&avgAccMin, &avgAccMax)
+	if err != nil {
+		return fmt.Errorf("error calculating average acceleration min/max: %v", err)
+	}
+
+	updateQuery := `UPDATE settings SET acc_min = $1, acc_max = $2 WHERE userid = $3`
+	_, err = s.db.Exec(updateQuery, avgAccMin, avgAccMax, userID)
+	if err != nil {
+		return fmt.Errorf("error updating acceleration min/max: %v", err)
+	}
+
+	return nil
+}
+
+func (s *service) UpdateMinMaxVar(userID int, varMin, varMax float64) error {
+	query := `UPDATE settings SET var_min = $1, var_max = $2 WHERE userid = $3`
+	result, err := s.db.Exec(query, varMin, varMax, userID)
+	if err != nil {
+		log.Printf("Database update error for variance min/max for user %d: %v", userID, err)
+		return fmt.Errorf("error updating variance min/max: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("Error checking affected rows for variance min/max for user %d: %v", userID, err)
+		return fmt.Errorf("error checking variance min/max update status: %v", err)
+	}
+
+	if rowsAffected == 0 {
+		insertQuery := `INSERT INTO settings (userid, var_min, var_max, plotting, affine, min_max) VALUES ($1, $2, $3, false, false, false)`
+		_, err := s.db.Exec(insertQuery, userID, varMin, varMax)
+		if err != nil {
+			log.Printf("Database insert error for variance min/max for user %d: %v", userID, err)
+			return fmt.Errorf("error inserting variance min/max: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *service) UpdateMinMaxAcc(userID int, accMin, accMax float64) error {
+	query := `UPDATE settings SET acc_min = $1, acc_max = $2 WHERE userid = $3`
+	result, err := s.db.Exec(query, accMin, accMax, userID)
+	if err != nil {
+		log.Printf("Database update error for acceleration min/max for user %d: %v", userID, err)
+		return fmt.Errorf("error updating acceleration min/max: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("Error checking affected rows for acceleration min/max for user %d: %v", userID, err)
+		return fmt.Errorf("error checking acceleration min/max update status: %v", err)
+	}
+
+	if rowsAffected == 0 {
+		insertQuery := `INSERT INTO settings (userid, acc_min, acc_max, plotting, affine, min_max) VALUES ($1, $2, $3, false, false, false)`
+		_, err := s.db.Exec(insertQuery, userID, accMin, accMax)
+		if err != nil {
+			log.Printf("Database insert error for acceleration min/max for user %d: %v", userID, err)
+			return fmt.Errorf("error inserting acceleration min/max: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *service) UpdateUserMinMaxVar(userID int) error {
+	var useAverage bool
+
+	query := `SELECT min_max FROM settings WHERE userid = $1`
+	row := s.db.QueryRow(query, userID)
+
+	err := row.Scan(&useAverage)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("yah momma")
+			return fmt.Errorf("Settings not found for user")
+		}
+		return fmt.Errorf("Error querying settings: %v", err)
+	}
+
+	if useAverage {
+		return s.AverageMinMaxVar(userID)
+	} else {
+		var varMin, varMax float64
+
+		recentQuery := `
+			SELECT var_min, var_max FROM session
+			WHERE user_id = $1
+			ORDER BY created_at DESC
+			LIMIT 1`
+		recentRow := s.db.QueryRow(recentQuery, userID)
+
+		err := recentRow.Scan(&varMin, &varMax)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("No sessions found for user")
+			}
+			return fmt.Errorf("Error retrieving recent variance session data: %v", err)
+		}
+
+		return s.UpdateMinMaxVar(userID, varMin, varMax)
+	}
+}
+
+func (s *service) UpdateUserMinMaxAcc(userID int) error {
 	var useAverage bool
 
 	query := `SELECT min_max FROM settings WHERE userid = $1`
@@ -507,26 +626,26 @@ func (s *service) UpdateUserMinMax(userID int) error {
 	}
 
 	if useAverage {
-		return s.AverageMinMax(userID)
+		return s.AverageMinMaxAcc(userID)
 	} else {
-		var recentMin, recentMax float64
+		var accMin, accMax float64
 
 		recentQuery := `
-			SELECT min, max FROM session
+			SELECT acc_min, acc_max FROM session
 			WHERE user_id = $1
 			ORDER BY created_at DESC
 			LIMIT 1`
 		recentRow := s.db.QueryRow(recentQuery, userID)
 
-		err := recentRow.Scan(&recentMin, &recentMax)
+		err := recentRow.Scan(&accMin, &accMax)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return fmt.Errorf("No sessions found for user")
 			}
-			return fmt.Errorf("Error retrieving recent session data: %v", err)
+			return fmt.Errorf("Error retrieving recent acceleration session data: %v", err)
 		}
 
-		return s.UpdateMinMax(userID, recentMin, recentMax)
+		return s.UpdateMinMaxAcc(userID, accMin, accMax)
 	}
 }
 
@@ -548,5 +667,46 @@ func (s *service) UpdateMinMaxSetting(userID int, minMax bool) error {
 		return fmt.Errorf("No settings found for user")
 	}
 
+	return nil
+}
+
+func (s *service) InsertSettings(userID int, varMin, varMax, accMin, accMax float64) error {
+	var plotting, affine, minMax bool
+
+	query := `SELECT plotting, affine, min_max FROM settings WHERE userid = $1`
+	row := s.db.QueryRow(query, userID)
+
+	err := row.Scan(&plotting, &affine, &minMax)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			insertQuery := `
+				INSERT INTO settings (
+					userid,
+					var_min,
+					var_max,
+					acc_min,
+					acc_max,
+					plotting,
+					affine,
+					min_max
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			`
+
+			plotting = true
+			affine = false
+			minMax = false
+
+			_, err := s.db.Exec(insertQuery, userID, varMin, varMax, accMin, accMax, plotting, affine, minMax)
+			if err != nil {
+				return fmt.Errorf("Error inserting default settings for user %d: %v", userID, err)
+			}
+
+			log.Printf("Default settings inserted for user %d", userID)
+			return nil
+		}
+		return fmt.Errorf("Error querying settings for user %d: %v", userID, err)
+	}
+
+	log.Printf("Settings already exist for user %d", userID)
 	return nil
 }
