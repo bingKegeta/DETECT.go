@@ -16,8 +16,10 @@ CREATE TABLE settings (
     id SERIAL PRIMARY KEY,
     userid INTEGER REFERENCES Users(id),
     sensitivity FLOAT DEFAULT 1.0,
-    min FLOAT NOT NULL,
-    max FLOAT NOT NULL,
+    var_min FLOAT NOT NULL,
+    var_max FLOAT NOT NULL,
+    acc_min FLOAT NOT NULL,
+    acc_max FLOAT NOT NULL,
     plotting BOOLEAN NOT NULL,
     affine BOOLEAN NOT NULL,
     min_max BOOLEAN NOT NULL,
@@ -30,8 +32,10 @@ CREATE TABLE session (
     user_id INTEGER REFERENCES Users(id),
     start_time TIMESTAMP NOT NULL,
     end_time TIMESTAMP NOT NULL,
-    min FLOAT NOT NULL,
-    max FLOAT NOT NULL,
+    var_min FLOAT NOT NULL,
+    var_max FLOAT NOT NULL,
+    acc_min FLOAT NOT NULL,
+    acc_max FLOAT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
