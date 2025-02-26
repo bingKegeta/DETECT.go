@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"time"
-	"os/exec"
-	"math"
+
 	//"strconv"
 
 	"DETECT.go/internal/database"
