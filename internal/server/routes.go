@@ -520,6 +520,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var requestData struct {
+		Name string `json:"name"`
 		StartTime string  `json:"start_time"`
 		EndTime   string  `json:"end_time"`
 		VarMin       float64 `json:"var_min"`
@@ -534,7 +535,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = dbService.CreateSession(userID, requestData.StartTime, requestData.EndTime, requestData.VarMin, requestData.VarMax, requestData.AccMin, requestData.AccMax)
+	err = dbService.CreateSession(requestData.Name, userID, requestData.StartTime, requestData.EndTime, requestData.VarMin, requestData.VarMax, requestData.AccMin, requestData.AccMax)
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
