@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"time"
+
 	//"errors"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -54,10 +55,6 @@ type Service interface {
 	GetUserIDByEmail(email string) (int, error)
 
 	CreateSession(userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) error
-
-	UpdateMinMax(userID int, min, max float64) error
-
-	GetUserMinMax(userID int) (float64, float64, error)
 
 	InsertAnalysis(sessionID int, timestamp, x, y, prob float64) error
 
@@ -113,14 +110,14 @@ func New() Service {
 	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s", username, password, host, port, database, schema)
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
-        log.Fatalf("Failed to connect to database: %v", err)
-    }
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
 
 	// Ping the database to ensure the connection is established
-    err = db.Ping()
-    if err != nil {
-        log.Fatalf("Failed to ping database: %v", err)
-    }
+	err = db.Ping()
+	if err != nil {
+		log.Fatalf("Failed to ping database: %v", err)
+	}
 
 	dbInstance = &service{
 		db: db,
@@ -190,50 +187,50 @@ func (s *service) Close() error {
 
 // Check if a user exists by email
 func (s *service) UserExists(email string) (bool, error) {
-    var exists bool
-    query := "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)"
-    err := s.db.QueryRow(query, email).Scan(&exists)
-    if err != nil {
-        return false, err
-    }
-    return exists, nil
+	var exists bool
+	query := "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)"
+	err := s.db.QueryRow(query, email).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 // Insert a new user into the database
 func (s *service) InsertUser(email, password string) (int, error) {
-    var userID int
-    query := "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id"
-    err := s.db.QueryRow(query, email, password).Scan(&userID)
-    if err != nil {
-        return 0, err
-    }
-    return userID, nil
+	var userID int
+	query := "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id"
+	err := s.db.QueryRow(query, email, password).Scan(&userID)
+	if err != nil {
+		return 0, err
+	}
+	return userID, nil
 }
 
 // GetAllUsers returns the IDs and emails of all registered users.
 func (s *service) GetAllUsers() (map[int]string, error) {
-    users := make(map[int]string)
-    query := "SELECT id, email FROM users"
-    rows, err := s.db.Query(query)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
+	users := make(map[int]string)
+	query := "SELECT id, email FROM users"
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-    for rows.Next() {
-        var id int
-        var email string
-        if err := rows.Scan(&id, &email); err != nil {
-            return nil, err
-        }
-        users[id] = email
-    }
+	for rows.Next() {
+		var id int
+		var email string
+		if err := rows.Scan(&id, &email); err != nil {
+			return nil, err
+		}
+		users[id] = email
+	}
 
-    if err := rows.Err(); err != nil {
-        return nil, err
-    }
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-    return users, nil
+	return users, nil
 }
 
 func (s *service) VerifyUser(email, password string) (bool, error) {
@@ -248,30 +245,30 @@ func (s *service) VerifyUser(email, password string) (bool, error) {
 
 // GetUserPassword retrieves the hashed password for a given email.
 func (s *service) GetUserPassword(email string) (string, error) {
-    var hashedPassword string
-    query := "SELECT password FROM users WHERE email = $1"
-    err := s.db.QueryRow(query, email).Scan(&hashedPassword)
-    if err != nil {
-        if err == sql.ErrNoRows {
-            return "", fmt.Errorf("user not found")
-        }
-        return "", err
-    }
-    return hashedPassword, nil
+	var hashedPassword string
+	query := "SELECT password FROM users WHERE email = $1"
+	err := s.db.QueryRow(query, email).Scan(&hashedPassword)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("user not found")
+		}
+		return "", err
+	}
+	return hashedPassword, nil
 }
 
 // InsertUserToken inserts the JWT token and creation timestamp for the user.
 func (s *service) InsertUserToken(email, token string) error {
-    query := "UPDATE users SET auth_token=$1, auth_token_created_at=NOW() WHERE email=$2"
-    _, err := s.db.Exec(query, token, email)
-    return err
+	query := "UPDATE users SET auth_token=$1, auth_token_created_at=NOW() WHERE email=$2"
+	_, err := s.db.Exec(query, token, email)
+	return err
 }
 
 // RemoveUserToken removes the JWT token for a given email.
 func (s *service) RemoveUserToken(token string) error {
-    query := "UPDATE users SET auth_token=NULL, auth_token_created_at=NULL WHERE auth_token=$1"
-    _, err := s.db.Exec(query, token)
-    return err
+	query := "UPDATE users SET auth_token=NULL, auth_token_created_at=NULL WHERE auth_token=$1"
+	_, err := s.db.Exec(query, token)
+	return err
 }
 
 // GetUserByToken gets the email of the user through token input
@@ -279,7 +276,7 @@ func (s *service) GetUserByToken(token string) (string, bool, error) {
 	var email string
 
 	query := `SELECT email FROM Users WHERE auth_token = $1`
-	row:= s.db.QueryRow(query, token)
+	row := s.db.QueryRow(query, token)
 
 	err := row.Scan(&email)
 	if err != nil {
@@ -296,10 +293,10 @@ type Session struct {
 	UserID    int
 	StartTime string
 	EndTime   string
-	VarMin       float64
-	VarMax       float64
-	AccMin       float64
-	AccMax       float64
+	VarMin    float64
+	VarMax    float64
+	AccMin    float64
+	AccMax    float64
 	CreatedAt string
 }
 
