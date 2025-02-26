@@ -579,9 +579,9 @@ func (s *service) UpdateUserMinMaxVar(userID int) error {
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("yah momma")
-			return fmt.Errorf("Settings not found for user")
+			return fmt.Errorf("settings not found for user")
 		}
-		return fmt.Errorf("Error querying settings: %v", err)
+		return fmt.Errorf("error querying settings: %v", err)
 	}
 
 	if useAverage {
@@ -599,9 +599,9 @@ func (s *service) UpdateUserMinMaxVar(userID int) error {
 		err := recentRow.Scan(&varMin, &varMax)
 		if err != nil {
 			if err == sql.ErrNoRows {
-				return fmt.Errorf("No sessions found for user")
+				return fmt.Errorf("no sessions found for user")
 			}
-			return fmt.Errorf("Error retrieving recent variance session data: %v", err)
+			return fmt.Errorf("error retrieving recent variance session data: %v", err)
 		}
 
 		return s.UpdateMinMaxVar(userID, varMin, varMax)
@@ -617,9 +617,9 @@ func (s *service) UpdateUserMinMaxAcc(userID int) error {
 	err := row.Scan(&useAverage)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("Settings not found for user")
+			return fmt.Errorf("settings not found for user")
 		}
-		return fmt.Errorf("Error querying settings: %v", err)
+		return fmt.Errorf("error querying settings: %v", err)
 	}
 
 	if useAverage {
@@ -637,9 +637,9 @@ func (s *service) UpdateUserMinMaxAcc(userID int) error {
 		err := recentRow.Scan(&accMin, &accMax)
 		if err != nil {
 			if err == sql.ErrNoRows {
-				return fmt.Errorf("No sessions found for user")
+				return fmt.Errorf("no sessions found for user")
 			}
-			return fmt.Errorf("Error retrieving recent acceleration session data: %v", err)
+			return fmt.Errorf("error retrieving recent acceleration session data: %v", err)
 		}
 
 		return s.UpdateMinMaxAcc(userID, accMin, accMax)
@@ -657,11 +657,11 @@ func (s *service) UpdateMinMaxSetting(userID int, minMax bool) error {
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		log.Printf("Error checking affected rows for user %d: %v", userID, err)
-		return fmt.Errorf("Error checking update status: %v", err)
+		return fmt.Errorf("error checking update status: %v", err)
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("No settings found for user")
+		return fmt.Errorf("no settings found for user")
 	}
 
 	return nil
@@ -695,13 +695,13 @@ func (s *service) InsertSettings(userID int, varMin, varMax, accMin, accMax floa
 
 			_, err := s.db.Exec(insertQuery, userID, varMin, varMax, accMin, accMax, plotting, affine, minMax)
 			if err != nil {
-				return fmt.Errorf("Error inserting default settings for user %d: %v", userID, err)
+				return fmt.Errorf("error inserting default settings for user %d: %v", userID, err)
 			}
 
 			log.Printf("Default settings inserted for user %d", userID)
 			return nil
 		}
-		return fmt.Errorf("Error querying settings for user %d: %v", userID, err)
+		return fmt.Errorf("error querying settings for user %d: %v", userID, err)
 	}
 
 	log.Printf("Settings already exist for user %d", userID)
