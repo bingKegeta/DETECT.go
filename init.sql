@@ -29,6 +29,7 @@ CREATE TABLE settings (
 -- Session Table
 CREATE TABLE session (
     id SERIAL PRIMARY KEY,
+    name VARCHAR(255),
     user_id INTEGER REFERENCES Users(id),
     start_time TIMESTAMP NOT NULL,
     end_time TIMESTAMP NOT NULL,
