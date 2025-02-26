@@ -54,7 +54,7 @@ type Service interface {
 
 	GetUserIDByEmail(email string) (int, error)
 
-	CreateSession(userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) error
+	CreateSession(name string, userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) error
 
 	InsertAnalysis(sessionID int, timestamp, x, y, prob float64) error
 
@@ -290,6 +290,8 @@ func (s *service) GetUserByToken(token string) (string, bool, error) {
 }
 
 type Session struct {
+	Name      string
+	ID	  int
 	UserID    int
 	StartTime string
 	EndTime   string
@@ -312,7 +314,7 @@ type Analysis struct {
 func (s *service) GetUserSessions(userID int) ([]Session, error) {
 	var sessions []Session
 
-	query := `SELECT user_id, start_time, end_time, var_min, var_max, acc_min, acc_max, created_at FROM session WHERE user_id = $1 ORDER BY start_time DESC`
+	query := `SELECT name, id, user_id, start_time, end_time, var_min, var_max, acc_min, acc_max, created_at FROM session WHERE user_id = $1 ORDER BY start_time DESC`
 	rows, err := s.db.Query(query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("error querying database: %v", err)
@@ -321,7 +323,7 @@ func (s *service) GetUserSessions(userID int) ([]Session, error) {
 
 	for rows.Next() {
 		var ses Session
-		err := rows.Scan(&ses.UserID, &ses.StartTime, &ses.EndTime, &ses.VarMin, &ses.VarMax, &ses.AccMin, &ses.AccMax, &ses.CreatedAt)
+		err := rows.Scan(&ses.Name, &ses.ID, &ses.UserID, &ses.StartTime, &ses.EndTime, &ses.VarMin, &ses.VarMax, &ses.AccMin, &ses.AccMax, &ses.CreatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("error scanning row: %v", err)
 		}
@@ -370,9 +372,9 @@ func (s *service) GetUserIDByEmail(email string) (int, error) {
 	return userID, nil
 }
 
-func (s *service) CreateSession(userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) error {
-	query := `INSERT INTO session (user_id, start_time, end_time, var_min, var_max, acc_min, acc_max) VALUES ($1, $2, $3, $4, $5, $6, $7)`
-	_, err := s.db.Exec(query, userID, startTime, endTime, v_min, v_max, a_min, a_max)
+func (s *service) CreateSession(name string, userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) error {
+	query := `INSERT INTO session (name, user_id, start_time, end_time, var_min, var_max, acc_min, acc_max) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	_, err := s.db.Exec(query, name, userID, startTime, endTime, v_min, v_max, a_min, a_max)
 	if err != nil {
 		return fmt.Errorf("error inserting session: %v", err)
 	}
