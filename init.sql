@@ -1,3 +1,4 @@
+-- User Table
 CREATE TABLE IF NOT EXISTS Users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
@@ -10,16 +11,42 @@ CREATE TABLE IF NOT EXISTS Users (
 CREATE INDEX IF NOT EXISTS idx_users_email ON Users(email);
 CREATE INDEX IF NOT EXISTS idx_users_auth_token ON Users(auth_token);
 
--- WebSocketMessages table to store incoming messages
-CREATE TABLE websocket_messages (
+-- Settings Table
+CREATE TABLE settings (
     id SERIAL PRIMARY KEY,
-    x FLOAT8,
-    y FLOAT8,
-    second FLOAT8,
-    is_video BOOLEAN,
-    video_duration FLOAT8
+    userid INTEGER REFERENCES Users(id),
+    sensitivity FLOAT DEFAULT 1.0,
+    var_min FLOAT NOT NULL,
+    var_max FLOAT NOT NULL,
+    acc_min FLOAT NOT NULL,
+    acc_max FLOAT NOT NULL,
+    plotting BOOLEAN NOT NULL,
+    affine BOOLEAN NOT NULL,
+    min_max BOOLEAN NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Session Table
+CREATE TABLE session (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255),
+    user_id INTEGER REFERENCES Users(id),
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP NOT NULL,
+    var_min FLOAT NOT NULL,
+    var_max FLOAT NOT NULL,
+    acc_min FLOAT NOT NULL,
+    acc_max FLOAT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
--- Index on user_id for faster lookups of messages by user
-CREATE INDEX IF NOT EXISTS idx_websocket_messages_user_id ON WebSocketMessages(user_id);
+-- Analysis Table
+CREATE TABLE analysis (
+    id SERIAL PRIMARY KEY,
+    session_id INTEGER REFERENCES session(id),
+    timestamp FLOAT NOT NULL,
+    X FLOAT NOT NULL,
+    Y FLOAT NOT NULL,
+    prob FLOAT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
