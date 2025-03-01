@@ -56,7 +56,7 @@ type Service interface {
 
 	CreateSession(name string, userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) error
 
-	InsertAnalysis(sessionID int, timestamp, x, y, prob float64) error
+	InsertAnalysis(entries []AnalysisData) error
 
 	DeleteAnalysis(sessionID int) error
 
@@ -311,6 +311,14 @@ type Analysis struct {
 	CreatedAt string  `json:"created_at"`
 }
 
+type AnalysisData struct {
+	SessionID int     `json:"session_id"`
+	Timestamp float64 `json:"timestamp"`
+	X         float64 `json:"x"`
+	Y         float64 `json:"y"`
+	Prob      float64 `json:"prob"`
+}
+
 func (s *service) GetUserSessions(userID int) ([]Session, error) {
 	var sessions []Session
 
@@ -382,13 +390,31 @@ func (s *service) CreateSession(name string, userID int, startTime, endTime stri
 	return nil
 }
 
-func (s *service) InsertAnalysis(sessionID int, timestamp, x, y, prob float64) error {
-	query := `INSERT INTO analysis (session_id, timestamp, x, y, prob, created_at) VALUES ($1, $2, $3, $4, $5, NOW())`
-	_, err := s.db.Exec(query, sessionID, timestamp, x, y, prob)
+func (s *service) InsertAnalysis(entries []AnalysisData) error {
+	if len(entries) == 0 {
+		return fmt.Errorf("no analysis data to insert")
+	}
+
+	query := `INSERT INTO analysis (session_id, timestamp, x, y, prob, created_at) VALUES `
+	values := []interface{}{}
+	placeholders := []string{}
+
+	for i, entry := range entries {
+		offset := i * 5
+		placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, NOW())",
+			offset+1, offset+2, offset+3, offset+4, offset+5))
+
+		values = append(values, entry.SessionID, entry.Timestamp, entry.X, entry.Y, entry.Prob)
+	}
+
+	query += strings.Join(placeholders, ", ")
+
+	_, err := s.db.Exec(query, values...)
 	if err != nil {
-		log.Printf("Error inserting analysis data for session %d: %v", sessionID, err)
+		log.Printf("Error inserting batch analysis data: %v", err)
 		return fmt.Errorf("error inserting analysis data: %v", err)
 	}
+
 	return nil
 }
 
