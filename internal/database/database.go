@@ -86,6 +86,8 @@ type Service interface {
 	UpdateMinMaxSetting(userID int, minMax bool) error
 
 	InsertSettings(userID int, varMin, varMax, accMin, accMax float64) error
+
+	GetUserSettings(userID int) (bool, bool, bool, float64, error)
 }
 
 type service struct {
@@ -735,4 +737,22 @@ func (s *service) InsertSettings(userID int, varMin, varMax, accMin, accMax floa
 
 	log.Printf("Settings already exist for user %d", userID)
 	return nil
+}
+
+func (s *service) GetUserSettings(userID int) (bool, bool, bool, float64, error) {
+	var plotting, affine, minMax bool
+	var sensitivity float64
+
+	query := `SELECT plotting, affine, min_max, sensitivity FROM settings WHERE userid = $1`
+	row := s.db.QueryRow(query, userID)
+
+	err := row.Scan(&plotting, &affine, &minMax, &sensitivity)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, false, false, 1.0, fmt.Errorf("no settings found for user %d", userID)
+		}
+		return false, false, false, 1.0, fmt.Errorf("error querying settings for user %d: %v", userID, err)
+	}
+
+	return plotting, affine, minMax, sensitivity, nil
 }
