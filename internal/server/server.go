@@ -28,6 +28,13 @@ type Server struct {
 // WebSocket server instance
 var wsServer *http.Server
 
+// upgrader initializes the WebSocket upgrader
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true // Allow all connections (you can add checks here for security)
+	},
+}
+
 // NewServer initializes and returns an HTTP server
 func NewServer() *http.Server {
 	port, _ := strconv.Atoi(os.Getenv("PORT"))
