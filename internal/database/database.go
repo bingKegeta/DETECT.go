@@ -753,16 +753,36 @@ func (s *service) GetUserSettings(userID int) (bool, bool, bool, float64, error)
 	var plotting, affine, minMax bool
 	var sensitivity float64
 
+	// Query to retrieve the settings from the database
 	query := `SELECT plotting, affine, min_max, sensitivity FROM settings WHERE userid = $1`
 	row := s.db.QueryRow(query, userID)
 
+	// Attempt to scan the settings
 	err := row.Scan(&plotting, &affine, &minMax, &sensitivity)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return false, false, false, 1.0, fmt.Errorf("no settings found for user %d", userID)
+			// If no settings are found, insert default settings
+			fmt.Printf("No Rows Error for user %d, inserting default settings\n", userID)
+			// Call InsertSettings to insert default values for the user
+			var varMin, varMax, accMin, accMax float64
+			varMin = 0.0   // Set appropriate default values for varMin
+			varMax = 100.0 // Set appropriate default values for varMax
+			accMin = 0.0   // Set appropriate default values for accMin
+			accMax = 100.0 // Set appropriate default values for accMax
+
+			err := s.InsertSettings(userID, varMin, varMax, accMin, accMax)
+			if err != nil {
+				// If there was an error inserting the settings, return the error
+				return false, false, false, 1.0, fmt.Errorf("failed to insert default settings for user %d: %v", userID, err)
+			}
+
+			// After inserting, return the default settings
+			return true, false, false, 1.0, nil
 		}
+		// If there's another error, return it
 		return false, false, false, 1.0, fmt.Errorf("error querying settings for user %d: %v", userID, err)
 	}
 
+	// Return the found settings
 	return plotting, affine, minMax, sensitivity, nil
 }
