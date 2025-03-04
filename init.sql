@@ -12,19 +12,21 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON Users(email);
 CREATE INDEX IF NOT EXISTS idx_users_auth_token ON Users(auth_token);
 
 -- Settings Table
+-- Settings Table with default values
 CREATE TABLE settings (
     id SERIAL PRIMARY KEY,
     userid INTEGER REFERENCES Users(id),
     sensitivity FLOAT DEFAULT 1.0,
-    var_min FLOAT NOT NULL,
-    var_max FLOAT NOT NULL,
-    acc_min FLOAT NOT NULL,
-    acc_max FLOAT NOT NULL,
-    plotting BOOLEAN NOT NULL,
-    affine BOOLEAN NOT NULL,
-    min_max BOOLEAN NOT NULL,
+    var_min FLOAT DEFAULT 0.0,      -- Default value set to 0.0
+    var_max FLOAT DEFAULT 100.0,    -- Default value set to 100.0
+    acc_min FLOAT DEFAULT 0.0,      -- Default value set to 0.0
+    acc_max FLOAT DEFAULT 100.0,    -- Default value set to 100.0
+    plotting BOOLEAN DEFAULT false,  -- Default value set to false
+    affine BOOLEAN DEFAULT false,   -- Default value set to false
+    min_max BOOLEAN DEFAULT false,  -- Default value set to false
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
 
 -- Session Table
 CREATE TABLE session (
