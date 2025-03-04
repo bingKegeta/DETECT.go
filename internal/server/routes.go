@@ -8,16 +8,17 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	//"strconv"
 
 	"DETECT.go/internal/database"
-	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
 	"github.com/markbates/goth/gothic"
 	"golang.org/x/crypto/bcrypt"
@@ -25,9 +26,15 @@ import (
 
 var jwtSecret []byte
 
-/*
-! Send the JWT token as a cookie to the client on traditional login/register
-*/
+// clientManager maintains active WebSocket connections.
+type clientManager struct {
+	clients map[string]*websocket.Conn
+	mu      sync.Mutex
+}
+
+var manager = clientManager{
+	clients: make(map[string]*websocket.Conn),
+}
 
 func init() {
 	// Load .env file
@@ -43,6 +50,74 @@ func init() {
 	}
 
 	jwtSecret = []byte(secret)
+}
+
+// WebSocketHandler upgrades the connection and handles communication.
+func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
+	// You can add session validation/authentication here.
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, "user_id is required", http.StatusUnauthorized)
+		return
+	}
+
+	// Correctly call Upgrade on the struct instance
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil) // Call the method on the struct, not a pointer
+	if err != nil {
+		http.Error(w, "Failed to upgrade connection", http.StatusInternalServerError)
+		return
+	}
+
+	// Register client
+	manager.mu.Lock()
+	manager.clients[userID] = conn
+	manager.mu.Unlock()
+
+	// Ensure cleanup on disconnect
+	defer func() {
+		manager.mu.Lock()
+		delete(manager.clients, userID)
+		manager.mu.Unlock()
+		conn.Close()
+	}()
+
+	// Set up ping/pong to maintain connection health.
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+
+	// Start a goroutine to send periodic pings.
+	go func() {
+		ticker := time.NewTicker((60 * time.Second * 9) / 10)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Read messages from the client.
+	for {
+		messageType, message, err := conn.ReadMessage()
+		if err != nil {
+			log.Printf("read error from %s: %v", userID, err)
+			break
+		}
+		// Example: echo the message back.
+		if err := conn.WriteMessage(messageType, message); err != nil {
+			log.Printf("write error to %s: %v", userID, err)
+			break
+		}
+	}
 }
 
 func (s *Server) RegisterRoutes() http.Handler {
@@ -62,7 +137,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	r.Get("/", s.HelloWorldHandler)
 	r.Get("/health", s.healthHandler)
-	r.Get("/websocket", HandleWebSocket)
+	r.Get("/websocket", WebSocketHandler)
 	r.Post("/login", s.handleLogin)
 	r.Post("/register", s.handleRegister)
 	r.Get("/auth/{provider}", s.startAuth)
@@ -558,31 +633,6 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(usersJSON)
-}
-
-func (s *Server) websocketHandler(w http.ResponseWriter, r *http.Request) {
-	socket, err := websocket.Accept(w, r, nil)
-
-	if err != nil {
-		log.Printf("could not open websocket: %v", err)
-		_, _ = w.Write([]byte("could not open websocket"))
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	defer socket.Close(websocket.StatusGoingAway, "server closing websocket")
-
-	ctx := r.Context()
-	socketCtx := socket.CloseRead(ctx)
-
-	for {
-		payload := fmt.Sprintf("server timestamp: %d", time.Now().UnixNano())
-		err := socket.Write(socketCtx, websocket.MessageText, []byte(payload))
-		if err != nil {
-			break
-		}
-		time.Sleep(time.Second * 2)
-	}
 }
 
 func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
