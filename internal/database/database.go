@@ -7,8 +7,8 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"time"
 	"strings"
+	"time"
 
 	//"errors"
 
@@ -83,11 +83,15 @@ type Service interface {
 
 	UpdateUserMinMaxAcc(userID int) error
 
-	UpdateMinMaxSetting(userID int, minMax bool) error
-
 	InsertSettings(userID int, varMin, varMax, accMin, accMax float64) error
 
 	GetUserSettings(userID int) (bool, bool, bool, float64, error)
+
+	UpdateMinMaxSetting(userID int, minMax bool) error
+
+	UpdateNormalization(userID int, normalization bool) error
+
+	UpdateGraphing(userID int, plotting bool) error
 }
 
 type service struct {
@@ -294,7 +298,7 @@ func (s *service) GetUserByToken(token string) (string, bool, error) {
 
 type Session struct {
 	Name      string
-	ID	  int
+	ID        int
 	UserID    int
 	StartTime string
 	EndTime   string
@@ -442,6 +446,33 @@ func (s *service) DeleteSession(sessionID int) error {
 	if err != nil {
 		log.Printf("Error deleting session %d: %v", sessionID, err)
 		return fmt.Errorf("failed to delete session: %v", err)
+	}
+	return nil
+}
+
+func (s *service) UpdateMinMaxSetting(userID int, minMax bool) error {
+	query := `UPDATE settings SET min_max = $1 WHERE userid = $2`
+	_, err := s.db.Exec(query, minMax, userID)
+	if err != nil {
+		return fmt.Errorf("error updating min_max setting: %v", err)
+	}
+	return nil
+}
+
+func (s *service) UpdateNormalization(userID int, normalization bool) error {
+	query := `UPDATE settings SET affine = $1 WHERE userid = $2`
+	_, err := s.db.Exec(query, normalization, userID)
+	if err != nil {
+		return fmt.Errorf("error updating normalization: %v", err)
+	}
+	return nil
+}
+
+func (s *service) UpdateGraphing(userID int, plotting bool) error {
+	query := `UPDATE settings SET plotting = $1 WHERE userid = $2`
+	_, err := s.db.Exec(query, plotting, userID)
+	if err != nil {
+		return fmt.Errorf("error updating plotting: %v", err)
 	}
 	return nil
 }
@@ -675,27 +706,6 @@ func (s *service) UpdateUserMinMaxAcc(userID int) error {
 
 		return s.UpdateMinMaxAcc(userID, accMin, accMax)
 	}
-}
-
-func (s *service) UpdateMinMaxSetting(userID int, minMax bool) error {
-	query := `UPDATE settings SET min_max = $1 WHERE userid = $2`
-	result, err := s.db.Exec(query, minMax, userID)
-	if err != nil {
-		log.Printf("Database update error for user %d: %v", userID, err)
-		return fmt.Errorf("error updating min_max setting: %v", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		log.Printf("Error checking affected rows for user %d: %v", userID, err)
-		return fmt.Errorf("error checking update status: %v", err)
-	}
-
-	if rowsAffected == 0 {
-		return fmt.Errorf("no settings found for user")
-	}
-
-	return nil
 }
 
 func (s *service) InsertSettings(userID int, varMin, varMax, accMin, accMax float64) error {
