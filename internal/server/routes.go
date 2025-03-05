@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -674,31 +675,32 @@ type Session struct {
 	CreatedAt string  `json:"created_at"`
 }
 
-type Analysis struct {
+type AnalysisData struct {
 	SessionID int     `json:"session_id"`
 	Timestamp float64 `json:"timestamp"`
 	X         float64 `json:"x"`
 	Y         float64 `json:"y"`
 	Prob      float64 `json:"prob"`
-	CreatedAt string  `json:"created_at"`
 }
 
 func handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	var requestData struct {
-		SessionID int `json:"session_id"`
-	}
-
-	err := json.NewDecoder(r.Body).Decode(&requestData)
-	if err != nil {
-		http.Error(w, "Invalid JSON input", http.StatusBadRequest)
+	sessionIDStr := r.URL.Query().Get("id")
+	if sessionIDStr == "" {
+		http.Error(w, "Missing session_id in URL", http.StatusBadRequest)
 		return
 	}
 
-	analysisData, err := dbService.GetSessionAnalysis(requestData.SessionID)
+	sessionID, err := strconv.Atoi(sessionIDStr)
 	if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
+		http.Error(w, "Invalid session_id format", http.StatusBadRequest)
+		return
+	}
+
+	analysisData, err := dbService.GetSessionAnalysis(sessionID)
+	if err != nil {
+		http.Error(w, "Failed to retrieve analysis data", http.StatusInternalServerError)
 		return
 	}
 
