@@ -55,7 +55,7 @@ type Service interface {
 
 	GetUserIDByEmail(email string) (int, error)
 
-	CreateSession(name string, userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) error
+	CreateSession(name string, userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) (int, error)
 
 	InsertAnalysis(entries []AnalysisData) error
 
@@ -387,14 +387,21 @@ func (s *service) GetUserIDByEmail(email string) (int, error) {
 	return userID, nil
 }
 
-func (s *service) CreateSession(name string, userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) error {
-	query := `INSERT INTO session (name, user_id, start_time, end_time, var_min, var_max, acc_min, acc_max) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-	_, err := s.db.Exec(query, name, userID, startTime, endTime, v_min, v_max, a_min, a_max)
+func (s *service) CreateSession(name string, userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) (int, error) {
+	// Updated query to return the generated session ID
+	query := `
+		INSERT INTO session (name, user_id, start_time, end_time, var_min, var_max, acc_min, acc_max) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id`
+
+	var sessionID int
+	err := s.db.QueryRow(query, name, userID, startTime, endTime, v_min, v_max, a_min, a_max).Scan(&sessionID)
 	if err != nil {
-		return fmt.Errorf("error inserting session: %v", err)
+		return 0, fmt.Errorf("error inserting session: %v", err)
 	}
 
-	return nil
+	// Return the session ID
+	return sessionID, nil
 }
 
 func (s *service) InsertAnalysis(entries []AnalysisData) error {
