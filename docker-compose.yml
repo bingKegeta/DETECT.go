@@ -9,6 +9,7 @@ services:
     restart: unless-stopped
     ports:
       - "${PORT}:${PORT}"
+      - "${WS_PORT}:${WS_PORT}"
     environment:
       APP_ENV: ${APP_ENV}
       PORT: ${PORT}

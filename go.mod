@@ -3,11 +3,11 @@ module DETECT.go
 go 1.23.4
 
 require (
-	github.com/coder/websocket v1.8.12
 	github.com/go-chi/chi/v5 v5.2.0
 	github.com/go-chi/cors v1.2.1
 	github.com/golang-jwt/jwt/v4 v4.2.0
 	github.com/gorilla/sessions v1.4.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/joho/godotenv v1.5.1
 	github.com/markbates/goth v1.80.0
