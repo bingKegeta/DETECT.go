@@ -17,13 +17,13 @@ CREATE TABLE settings (
     id SERIAL PRIMARY KEY,
     userid INTEGER REFERENCES Users(id),
     sensitivity FLOAT DEFAULT 1.0,
-    var_min FLOAT DEFAULT 0.0,      -- Default value set to 0.0
-    var_max FLOAT DEFAULT 100.0,    -- Default value set to 100.0
-    acc_min FLOAT DEFAULT 0.0,      -- Default value set to 0.0
-    acc_max FLOAT DEFAULT 100.0,    -- Default value set to 100.0
-    plotting BOOLEAN DEFAULT false,  -- Default value set to false
-    affine BOOLEAN DEFAULT false,   -- Default value set to false
-    min_max BOOLEAN DEFAULT false,  -- Default value set to false
+    var_min FLOAT DEFAULT 0.0,
+    var_max FLOAT DEFAULT 100.0,
+    acc_min FLOAT DEFAULT 0.0,
+    acc_max FLOAT DEFAULT 100.0,
+    plotting BOOLEAN DEFAULT false,
+    affine BOOLEAN DEFAULT false,
+    min_max BOOLEAN DEFAULT false,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
