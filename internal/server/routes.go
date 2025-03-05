@@ -817,8 +817,8 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// Log the decoded requestData for debugging
 	fmt.Printf("Received request data: %+v\n", requestData)
 
-	// Insert session into database
-	err = dbService.CreateSession(requestData.Name, userID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
+	// Insert session into database and get the session ID
+	sessionID, err := dbService.CreateSession(requestData.Name, userID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
 	if err != nil {
 		fmt.Println("CreateSession Error: Failed to create session", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -827,8 +827,9 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("Session created successfully for user:", userID)
 
+	// Return session ID in the response
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"message": "Session created successfully"}`))
+	w.Write([]byte(fmt.Sprintf(`{"message": "Session created successfully", "sessionId": "%d"}`, sessionID)))
 }
 
 type AnalysisState struct {
