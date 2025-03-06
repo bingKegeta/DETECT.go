@@ -14,7 +14,7 @@ WORKDIR /app
 COPY --from=build /app/main /app/main
 COPY .env .env
 EXPOSE ${PORT}
-EXPOSE ${WS_PORT}
+EXPOSE ${PUBLIC_WS_PORT}
 CMD ["./main"]
 
 
