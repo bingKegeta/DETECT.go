@@ -1,0 +1,12 @@
+---
+import SessionCard from "./SessionCard.astro"; // still used for the custom element definition
+import SessionList from "./SessionList.svelte"; // New component for the list of sessions
+// You may also import types from utils if needed
+import type { SessionRequestData } from "../scripts/utils";
+---
+
+<aside
+  class="max-w-[40vh] w-fit p-5 h-[66vh] bg-base-200 rounded-lg shadow-lg mx-4 justify-center border-4 border-primary overflow-y-auto"
+>
+  <SessionList client:load />
+</aside>

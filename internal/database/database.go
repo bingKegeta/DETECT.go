@@ -114,7 +114,17 @@ func New() Service {
 		return dbInstance
 	}
 
-	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s", username, password, host, port, database, schema)
+	connStr := os.Getenv("DATABASE_URL")
+	if connStr == "" {
+		// Fallback to constructing the connection string from individual environment variables
+		username := os.Getenv("DB_USERNAME")
+		password := os.Getenv("DB_PASSWORD")
+		host := os.Getenv("DB_HOST")
+		port := os.Getenv("DB_PORT")
+		database := os.Getenv("DB_DATABASE")
+		connStr = fmt.Sprintf("postgres://%s:%s@%s:%s/%s",
+			username, password, host, port, database)
+	}
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -390,7 +400,7 @@ func (s *service) GetUserIDByEmail(email string) (int, error) {
 func (s *service) CreateSession(name string, userID int, startTime, endTime string, v_min, v_max, a_min, a_max float64) (int, error) {
 	// Updated query to return the generated session ID
 	query := `
-		INSERT INTO session (name, user_id, start_time, end_time, var_min, var_max, acc_min, acc_max) 
+		INSERT INTO session (name, user_id, start_time, end_time, var_min, var_max, acc_min, acc_max)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id`
 
