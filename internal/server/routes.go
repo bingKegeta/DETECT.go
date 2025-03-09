@@ -298,7 +298,7 @@ func handleUpdateNormalization(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update normalization setting in database
-	err = dbService.UpdateMinMaxSetting(userID, requestData.Normalization)
+	err = dbService.UpdateNormalization(userID, requestData.Normalization)
 	if err != nil {
 		http.Error(w, "Failed to update normalization", http.StatusInternalServerError)
 		return
@@ -642,6 +642,11 @@ func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
 	gothic.BeginAuthHandler(w, r)
 }
 
+type Response struct {
+    Success bool   `json:"success"`
+    Message string `json:"message"`
+}
+
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("token")
 	if err == nil && cookie.Value != "" {
@@ -664,7 +669,12 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("No OAuth session to clear: ", err)
 	}
 
-	http.Redirect(w, r, os.Getenv("CLIENT_URL")+"/", http.StatusFound)
+	response := Response{
+        Success: true,
+        Message: "Logged out successfully",
+    }
+    
+    json.NewEncoder(w).Encode(response)
 }
 
 type Session struct {
