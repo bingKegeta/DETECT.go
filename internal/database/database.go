@@ -103,7 +103,7 @@ func New() Service {
     host, port, username, password, database)
     }
 		
-	db, err := sql.Open("postgres", connStr)
+	db, err := sql.Open("pgx", connStr)
 	if err != nil {
         log.Fatalf("Failed to connect to database: %v", err)
     }
