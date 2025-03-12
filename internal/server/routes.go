@@ -121,7 +121,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	if environment == "" {
 		log.Fatalf("CLIENT_URL is not set in the .env file")
 	}
-	cors.Options{
+	corsOptions := cors.Options{
 		AllowedOrigins:   []string{environment},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
@@ -440,7 +440,7 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   true, // Set to true in production
+		Secure:   false, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -516,7 +516,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   true, // Set to true in production
+		Secure:   false, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteNoneMode,
 	})
