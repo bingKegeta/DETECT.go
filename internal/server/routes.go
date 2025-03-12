@@ -121,13 +121,20 @@ func (s *Server) RegisterRoutes() http.Handler {
 	if environment == "" {
 		log.Fatalf("CLIENT_URL is not set in the .env file")
 	}
-	r.Use(cors.Handler(cors.Options{
+	cors.Options{
 		AllowedOrigins:   []string{environment},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
 		MaxAge:           300,
-	}))
+	}
+
+	if environment == "development" {
+        	corsOptions.AllowedOrigins = []string{"*"}  // Allow all origins in development
+    	} else {
+        	corsOptions.AllowedOrigins = []string{environment}  // Restrict to a specific origin in production
+    	}
+	r.Use(cors.Handler(corsOptions))
 
 	r.Get("/", s.HelloWorldHandler)
 	r.Get("/health", s.healthHandler)
