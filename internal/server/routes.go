@@ -20,7 +20,6 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/gorilla/websocket"
-	"github.com/joho/godotenv"
 	"github.com/markbates/goth/gothic"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -38,12 +37,6 @@ var manager = clientManager{
 }
 
 func init() {
-	// Load .env file
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatalf("Error loading .env file")
-	}
-
 	// Read the secret from .env
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
@@ -440,7 +433,7 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   false, // Set to true in production
+		Secure:   true, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -516,7 +509,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   false, // Set to true in production
+		Secure:   true, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteNoneMode,
 	})
@@ -603,7 +596,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   false, // Set to true in production
+		Secure:   true, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -643,8 +636,8 @@ func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 type Response struct {
-    Success bool   `json:"success"`
-    Message string `json:"message"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -670,11 +663,11 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := Response{
-        Success: true,
-        Message: "Logged out successfully",
-    }
-    
-    json.NewEncoder(w).Encode(response)
+		Success: true,
+		Message: "Logged out successfully",
+	}
+
+	json.NewEncoder(w).Encode(response)
 }
 
 type Session struct {
