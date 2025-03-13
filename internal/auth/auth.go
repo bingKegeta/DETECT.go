@@ -21,6 +21,7 @@ const (
 func NewAuth() {
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
 	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	serverURL := os.Getenv("SERVER_URL")
 
 	store := sessions.NewCookieStore([]byte(key))
 	store.MaxAge(MaxAge)
@@ -32,7 +33,7 @@ func NewAuth() {
 	gothic.Store = store
 
 	goth.UseProviders(
-		google.New(googleClientID, googleClientSecret, "http://localhost:8080/auth/google/callback", "email", "profile"),
+		google.New(googleClientID, googleClientSecret, serverURL + "/auth/google/callback", "email", "profile"),
 	)
 
 }
