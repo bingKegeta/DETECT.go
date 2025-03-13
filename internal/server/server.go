@@ -25,6 +25,24 @@ type Server struct {
 	db   database.Service
 }
 
+// CORS middleware
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "https://detect-js-nine.vercel.app")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		// Handle preflight requests
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // WebSocket server instance
 var wsServer *http.Server
 
@@ -43,10 +61,12 @@ func NewServer() *http.Server {
 		db:   database.New(),
 	}
 
+	handler := corsMiddleware(serverInstance.RegisterRoutes())
+
 	// Configure HTTP server
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", serverInstance.port),
-		Handler:      serverInstance.RegisterRoutes(),
+		Handler:      handler,
 		IdleTimeout:  time.Minute,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
