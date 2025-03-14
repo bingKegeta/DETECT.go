@@ -26,21 +26,23 @@ type Server struct {
 	isProd bool
 }
 
-// CORS middleware
-func corsMiddleware(next http.Handler) http.Handler {
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "https://detect-js-nine.vercel.app")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
+        	origin := r.Header.Get("Origin")
+        
+        	if origin != "" && (strings.HasSuffix(origin, ".vercel.app") || origin == "https://detect-js-nine.vercel.app") {
+        		w.Header().Set("Access-Control-Allow-Origin", origin)
+        		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        		w.Header().Set("Access-Control-Allow-Credentials", "true")
+        	}
 
-		// Handle preflight requests
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
+        	if r.Method == http.MethodOptions {
+        		w.WriteHeader(http.StatusNoContent)
+        		return
+        	}
 
-		next.ServeHTTP(w, r)
+        	next.ServeHTTP(w, r)
 	})
 }
 
