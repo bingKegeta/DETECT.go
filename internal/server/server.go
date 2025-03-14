@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"syscall"
 	"time"
-	"string"
+	"strings"
 
 	"github.com/gorilla/websocket"
 	_ "github.com/joho/godotenv/autoload"
