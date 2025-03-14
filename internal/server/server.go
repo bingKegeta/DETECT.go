@@ -23,6 +23,7 @@ import (
 type Server struct {
 	port int
 	db   database.Service
+	isProd bool
 }
 
 // CORS middleware
@@ -56,9 +57,11 @@ var upgrader = websocket.Upgrader{
 // NewServer initializes and returns an HTTP server
 func NewServer() *http.Server {
 	port, _ := strconv.Atoi(os.Getenv("PORT"))
+	isProd := os.Getenv("IS_PROD") == "true"
 	serverInstance := &Server{
 		port: port,
 		db:   database.New(),
+		isProd: isProd,
 	}
 
 	handler := corsMiddleware(serverInstance.RegisterRoutes())
