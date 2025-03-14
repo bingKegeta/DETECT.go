@@ -442,7 +442,7 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   s.isProd, // Set to true in production
 		Path:     "/",
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteNoneMode,
 	})
 
 	// Redirect to the frontend dashboard
@@ -605,7 +605,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   s.isProd, // Set to true in production
 		Path:     "/",
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteNoneMode,
 	})
 
 	w.Header().Set("Content-Type", "application/json")
