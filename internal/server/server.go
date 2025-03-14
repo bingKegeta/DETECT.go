@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+	"string"
 
 	"github.com/gorilla/websocket"
 	_ "github.com/joho/godotenv/autoload"
@@ -66,7 +67,7 @@ func NewServer() *http.Server {
 		isProd: isProd,
 	}
 
-	handler := corsMiddleware(serverInstance.RegisterRoutes())
+	handler := s.corsMiddleware(serverInstance.RegisterRoutes())
 
 	// Configure HTTP server
 	server := &http.Server{
