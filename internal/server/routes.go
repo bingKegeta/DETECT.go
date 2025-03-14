@@ -526,6 +526,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Login successful",
+		"isProd": s.isProd,
 		// "token":   signedToken,
 	})
 }
