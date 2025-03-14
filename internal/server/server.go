@@ -58,7 +58,7 @@ var upgrader = websocket.Upgrader{
 }
 
 // NewServer initializes and returns an HTTP server
-func (s *Server) NewServer() *http.Server {
+func NewServer() *http.Server {
 	port, _ := strconv.Atoi(os.Getenv("PORT"))
 	isProd := os.Getenv("IS_PROD") == "true"
 	serverInstance := &Server{
@@ -67,7 +67,7 @@ func (s *Server) NewServer() *http.Server {
 		isProd: isProd,
 	}
 
-	handler := s.corsMiddleware(serverInstance.RegisterRoutes())
+	handler := serverInstance.corsMiddleware(serverInstance.RegisterRoutes())
 
 	// Configure HTTP server
 	server := &http.Server{
