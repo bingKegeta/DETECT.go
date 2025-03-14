@@ -440,7 +440,7 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   false, // Set to true in production
+		Secure:   s.isProd, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -516,7 +516,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   false, // Set to true in production
+		Secure:   s.isProd, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteNoneMode,
 	})
@@ -603,7 +603,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   true, // Set to true in production
+		Secure:   s.isProd, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
 	})
