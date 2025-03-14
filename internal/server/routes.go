@@ -122,18 +122,16 @@ func (s *Server) RegisterRoutes() http.Handler {
 		log.Fatalf("CLIENT_URL is not set in the .env file")
 	}
 	corsOptions := cors.Options{
-		AllowedOrigins:   []string{environment},
+		AllowedOrigins:   []string{environment, "https://accounts.google.com"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}
 
-	if environment == "development" {
+	if !s.isProd {
         	corsOptions.AllowedOrigins = []string{"*"}  // Allow all origins in development
-    	} else {
-        	corsOptions.AllowedOrigins = []string{environment}  // Restrict to a specific origin in production
-    	}
+	}
 	r.Use(cors.Handler(corsOptions))
 
 	r.Get("/", s.HelloWorldHandler)
@@ -383,9 +381,12 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(jsonResp)
 }
 
+type providerKey string
+const providerContextKey providerKey = "provider"
+
 func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	r = r.WithContext(context.WithValue(r.Context(), "provider", provider))
+	r = r.WithContext(context.WithValue(r.Context(), providerKey("provider"), provider))
 
 	// Complete the OAuth flow
 	user, err := gothic.CompleteUserAuth(w, r)
@@ -639,7 +640,7 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	r = r.WithContext(context.WithValue(context.Background(), "provider", provider))
+    r = r.WithContext(context.WithValue(r.Context(), providerContextKey, provider))
 	gothic.BeginAuthHandler(w, r)
 }
 
