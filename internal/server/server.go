@@ -26,7 +26,7 @@ type Server struct {
 	db   database.Service
 	isProd bool
 }
-
+/*
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         	origin := r.Header.Get("Origin")
@@ -45,7 +45,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
         	next.ServeHTTP(w, r)
 	})
-}
+}*/
 
 // WebSocket server instance
 var wsServer *http.Server
@@ -67,7 +67,7 @@ func NewServer() *http.Server {
 		isProd: isProd,
 	}
 
-	handler := serverInstance.corsMiddleware(serverInstance.RegisterRoutes())
+	handler := serverInstance.RegisterRoutes()
 
 	// Configure HTTP server
 	server := &http.Server{
