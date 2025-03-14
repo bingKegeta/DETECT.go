@@ -118,6 +118,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	environment := os.Getenv("CLIENT_URL")
+	isProd := os.Getenv("IS_PROD") == "true"
 	if environment == "" {
 		log.Fatalf("CLIENT_URL is not set in the .env file")
 	}
@@ -129,7 +130,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 		MaxAge:           300,
 	}
 
-	if !s.isProd {
+	if !isProd {
         	corsOptions.AllowedOrigins = []string{"*"}  // Allow all origins in development
 	}
 	r.Use(cors.Handler(corsOptions))
@@ -435,13 +436,15 @@ func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isProd := os.Getenv("IS_PROD") == "true"
+
 	// Set the JWT token in a secure, HTTP-only cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   s.isProd, // Set to true in production
+		Secure:   isProd, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteNoneMode,
 	})
@@ -511,13 +514,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isProd := os.Getenv("IS_PROD") == "true"
+
 	// Set the JWT token in a secure, HTTP-only cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   s.isProd, // Set to true in production
+		Secure:   isProd, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteNoneMode,
 	})
@@ -527,7 +532,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Login successful",
-		"isProd": s.isProd,
+		"isProd": isProd,
 		// "token":   signedToken,
 	})
 }
@@ -599,13 +604,15 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isProd := os.Getenv("IS_PROD") == "true"
+
 	// Set the JWT token in a secure, HTTP-only cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    signedToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   s.isProd, // Set to true in production
+		Secure:   isProd, // Set to true in production
 		Path:     "/",
 		SameSite: http.SameSiteNoneMode,
 	})
