@@ -143,7 +143,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Get("/auth/{provider}/callback", s.getAuthCallback)
 	r.Get("/logout", s.logout)
 	r.Get("/users", handleGetUsers)
-	r.Get("/getSessions", handleGetUserSessions)
+	r.Get("/getSessions/{user_id}", handleGetUserSessions)
 	r.Get("/sessionAnalysis", handleGetAnalysis)
 	r.Post("/createSession", handleCreateSession)
 	r.Post("/processCoords", s.processCoordsHandler)
@@ -160,7 +160,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Post("/updateMinMaxSetting", handleUpdateMinMaxSetting)
 	r.Post("/updateNormalization", handleUpdateNormalization)
 	r.Post("/updateGraphing", handleUpdateGraphing)
-	r.Get("/getUserSettings", handleGetUserSettings)
+	r.Get("/getUserSettings/{user_id}", handleGetUserSettings)
 
 	return r
 }
@@ -333,24 +333,15 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 func handleGetUserSettings(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
+	vars := mux.Vars(r) // Extracts URL parameters
+    	userID := vars["user_id"] // Get user_id from the URL
 
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
+    	if userID == "" {
+        	http.Error(w, "Missing user ID", http.StatusBadRequest)
+        	return
+    	}
 
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
+    	fmt.Println("Retrieved user ID from URL:", userID)
 
 	plotting, affine, minMax, sensitivity, err := dbService.GetUserSettings(userID)
 	if err != nil {
@@ -533,12 +524,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteNoneMode,
 	})
 
+	userID, err := dbService.GetUserIDByEmail(req.Email)
+	if err != nil {
+    		http.Error(w, "User not found", http.StatusNotFound)
+    		return
+	}
+
 	// Send response with JWT
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Login successful",
 		"isProd": isProd,
+		"userID": userID,
 		// "token":   signedToken,
 	})
 }
@@ -757,30 +755,15 @@ func handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	// Get the token from the cookie
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		fmt.Println("Error getting cookie: ", err) // Log the error
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
+	vars := mux.Vars(r) // Extracts URL parameters
+    	userID := vars["user_id"] // Get user_id from the URL
 
-	// Validate token
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		fmt.Println("Error or invalid token: ", err) // Log the error
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
+    	if userID == "" {
+        	http.Error(w, "Missing user ID", http.StatusBadRequest)
+        	return
+    	}
 
-	// Get user ID by email
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		fmt.Println("Error getting user ID: ", err) // Log the error
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
+    	fmt.Println("Retrieved user ID from URL:", userID)
 
 	// Fetch user sessions
 	sessions, err := dbService.GetUserSessions(userID)
