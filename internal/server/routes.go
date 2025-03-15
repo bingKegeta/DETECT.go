@@ -382,75 +382,81 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
-	provider := chi.URLParam(r, "provider")
+    provider := chi.URLParam(r, "provider")
+    fmt.Printf("Auth callback for provider: %s\n", provider)
+    
+    // Get the session to see if it exists in the callback
+    session, _ := gothic.Store.Get(r, gothic.SessionName)
+    fmt.Printf("Session in callback - Values: %v\n", session.Values)
+    
+    // Override GetProviderName just for this request
+    gothic.GetProviderName = func(req *http.Request) (string, error) {
+        return provider, nil
+    }
 
-	gothic.GetProviderName = func(r *http.Request) (string, error) {
-		return provider, nil
-	}
+    // Complete the OAuth flow
+    user, err := gothic.CompleteUserAuth(w, r)
+    if err != nil {
+        fmt.Printf("Auth error: %v\n", err)
+        http.Error(w, "Could not complete authentication: "+err.Error(), http.StatusInternalServerError)
+        return
+    }
 
+    // Debug: Print user details
+    fmt.Printf("Authenticated user: %+v\n", user)
 
-	// Complete the OAuth flow
-	user, err := gothic.CompleteUserAuth(w, r)
-	if err != nil {
-		http.Error(w, "Could not complete authentication: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+    dbService := database.New()
 
-	// Debug: Print user details
-	fmt.Printf("Authenticated user: %+v\n", user)
+    // Check if the user exists
+    exists, err := dbService.UserExists(user.Email)
+    if err != nil {
+        http.Error(w, "Database error", http.StatusInternalServerError)
+        return
+    }
 
-	dbService := database.New()
+    if (!exists) {
+        // Insert the OAuth user into the database
+        _, err := dbService.InsertUser(user.Email, "")
+        if err != nil {
+            http.Error(w, "Failed to log OAuth user into the database", http.StatusInternalServerError)
+            return
+        }
+    }
 
-	// Check if the user exists
-	exists, err := dbService.UserExists(user.Email)
-	if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
-	}
+    // Generate JWT for OAuth user
+    claims := &jwt.RegisteredClaims{
+        Subject:   user.Email,
+        ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+    }
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    signedToken, err := token.SignedString(jwtSecret)
+    if err != nil {
+        http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+        return
+    }
 
-	if !exists {
-		// Insert the OAuth user into the database
-		_, err := dbService.InsertUser(user.Email, "")
-		if err != nil {
-			http.Error(w, "Failed to log OAuth user into the database", http.StatusInternalServerError)
-			return
-		}
-	}
+    // Insert the JWT token into the database
+    err = dbService.InsertUserToken(user.Email, signedToken)
+    if err != nil {
+        http.Error(w, "Failed to insert token into the database", http.StatusInternalServerError)
+        return
+    }
 
-	// Generate JWT for OAuth user
-	claims := &jwt.RegisteredClaims{
-		Subject:   user.Email,
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signedToken, err := token.SignedString(jwtSecret)
-	if err != nil {
-		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
-		return
-	}
+    isProd := os.Getenv("IS_PROD") == "true"
 
-	// Insert the JWT token into the database
-	err = dbService.InsertUserToken(user.Email, signedToken)
-	if err != nil {
-		http.Error(w, "Failed to insert token into the database", http.StatusInternalServerError)
-		return
-	}
+    // Set the JWT token in a secure, HTTP-only cookie
+    http.SetCookie(w, &http.Cookie{
+        Name:     "token",
+        Value:    signedToken,
+        Expires:  time.Now().Add(24 * time.Hour),
+        HttpOnly: true,
+        Secure:   isProd, // Set to true in production
+        Path:     "/",
+        SameSite: http.SameSiteNoneMode,
+    })
 
-	isProd := os.Getenv("IS_PROD") == "true"
-
-	// Set the JWT token in a secure, HTTP-only cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "token",
-		Value:    signedToken,
-		Expires:  time.Now().Add(24 * time.Hour),
-		HttpOnly: true,
-		Secure:   isProd, // Set to true in production
-		Path:     "/",
-		SameSite: http.SameSiteNoneMode,
-	})
-
-	// Redirect to the frontend dashboard
-	http.Redirect(w, r, os.Getenv("CLIENT_URL")+"/dashboard", http.StatusFound)
+    // Redirect to the frontend dashboard
+    http.Redirect(w, r, os.Getenv("CLIENT_URL")+"/dashboard", http.StatusFound)
 }
 
 func jsonErrorResponse(w http.ResponseWriter, message string, statusCode int) {
@@ -646,11 +652,23 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
-	provider := chi.URLParam(r, "provider")
+    provider := chi.URLParam(r, "provider")
+    fmt.Printf("Starting auth for provider: %s\n", provider)
+    
+    // Create a modified request with the provider set correctly
+    req := r.WithContext(r.Context())
+    
+    // Override GetProviderName just for this request
     gothic.GetProviderName = func(req *http.Request) (string, error) {
         return provider, nil
     }
-	gothic.BeginAuthHandler(w, r)
+    
+    // Explicitly save a session with the provider name
+    session, _ := gothic.Store.Get(r, gothic.SessionName)
+    session.Values["provider"] = provider
+    session.Save(r, w)
+    
+    gothic.BeginAuthHandler(w, req)
 }
 
 type Response struct {
@@ -660,7 +678,7 @@ type Response struct {
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("token")
-	if err == nil && cookie.Value != "" {
+	if (err == nil && cookie.Value != "") {
 		dbService := database.New()
 		err := dbService.RemoveUserToken(cookie.Value)
 		if err != nil {
