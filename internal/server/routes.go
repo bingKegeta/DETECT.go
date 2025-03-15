@@ -382,12 +382,9 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(jsonResp)
 }
 
-type providerKey string
-const providerContextKey providerKey = "provider"
-
 func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	r = r.WithContext(context.WithValue(r.Context(), providerKey("provider"), provider))
+	r = r.WithContext(context.WithValue(r.Context(), "provider", provider))
 
 	// Complete the OAuth flow
 	user, err := gothic.CompleteUserAuth(w, r)
@@ -647,7 +644,7 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-    r = r.WithContext(context.WithValue(r.Context(), providerContextKey, provider))
+    r = r.WithContext(context.WithValue(r.Context(), "provider", provider))
 	gothic.BeginAuthHandler(w, r)
 }
 
