@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -123,7 +122,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 		log.Fatalf("CLIENT_URL is not set in the .env file")
 	}
 	corsOptions := cors.Options{
-		AllowedOrigins:   []string{environment, "https://accounts.google.com"},
+		AllowedOrigins:   []string{environment, "https://accounts.google.com", "*.vercel.app"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
@@ -384,7 +383,11 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	r = r.WithContext(context.WithValue(r.Context(), "provider", provider))
+
+	gothic.GetProviderName = func(r *http.Request) (string, error) {
+		return provider, nil
+	}
+
 
 	// Complete the OAuth flow
 	user, err := gothic.CompleteUserAuth(w, r)
@@ -644,7 +647,9 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-    r = r.WithContext(context.WithValue(r.Context(), "provider", provider))
+    gothic.GetProviderName = func(req *http.Request) (string, error) {
+        return provider, nil
+    }
 	gothic.BeginAuthHandler(w, r)
 }
 
