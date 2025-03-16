@@ -143,7 +143,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Get("/auth/{provider}/callback", s.getAuthCallback)
 	r.Get("/logout", s.logout)
 	r.Get("/users", handleGetUsers)
-	r.Get("/getSessions/{user_id}", handleGetUserSessions)
+	r.Get("/getSessions", handleGetUserSessions)
 	r.Get("/sessionAnalysis", handleGetAnalysis)
 	r.Post("/createSession", handleCreateSession)
 	r.Post("/processCoords", s.processCoordsHandler)
@@ -160,7 +160,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Post("/updateMinMaxSetting", handleUpdateMinMaxSetting)
 	r.Post("/updateNormalization", handleUpdateNormalization)
 	r.Post("/updateGraphing", handleUpdateGraphing)
-	r.Get("/getUserSettings/{user_id}", handleGetUserSettings)
+	r.Get("/getUserSettings", handleGetUserSettings)
 
 	return r
 }
