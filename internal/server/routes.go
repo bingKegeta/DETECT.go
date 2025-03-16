@@ -333,14 +333,12 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 func handleGetUserSettings(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	vars := mux.Vars(r) // Extracts URL parameters
-    	userID := vars["user_id"] // Get user_id from the URL
-
-    	if userID == "" {
-        	http.Error(w, "Missing user ID", http.StatusBadRequest)
-        	return
-    	}
-
+	userIDStr := r.URL.Query().Get("user_id")
+    	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		http.Error(w, "Invalid user id", http.StatusBadRequest)
+		return
+	}
     	fmt.Println("Retrieved user ID from URL:", userID)
 
 	plotting, affine, minMax, sensitivity, err := dbService.GetUserSettings(userID)
@@ -755,13 +753,12 @@ func handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	vars := mux.Vars(r) // Extracts URL parameters
-    	userID := vars["user_id"] // Get user_id from the URL
-
-    	if userID == "" {
-        	http.Error(w, "Missing user ID", http.StatusBadRequest)
-        	return
-    	}
+	userIDStr := r.URL.Query().Get("user_id")
+    	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		http.Error(w, "Invalid user id", http.StatusBadRequest)
+		return
+	}
 
     	fmt.Println("Retrieved user ID from URL:", userID)
 
