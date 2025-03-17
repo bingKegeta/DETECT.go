@@ -169,40 +169,19 @@ func (s *Server) RegisterRoutes() http.Handler {
 func handleUpdateMinMaxSetting(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	// Retrieve token from cookie
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	// Get email associated with the token
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	// Get user ID from email
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
 	// Parse request body
 	var requestData struct {
+		UserID   int  `json:"user_id"`
 		MinMax bool `json:"minMax"`
 	}
-	err = json.NewDecoder(r.Body).Decode(&requestData)
+	err := json.NewDecoder(r.Body).Decode(&requestData)
 	if err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	// Update Min/Max setting in the database
-	err = dbService.UpdateMinMaxSetting(userID, requestData.MinMax)
+	err = dbService.UpdateMinMaxSetting(requestData.UserID, requestData.MinMax)
 	if err != nil {
 		http.Error(w, "Failed to update Min/Max setting", http.StatusInternalServerError)
 		return
@@ -216,40 +195,19 @@ func handleUpdateMinMaxSetting(w http.ResponseWriter, r *http.Request) {
 func handleUpdateGraphing(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	// Retrieve token from cookie
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	// Get email associated with the token
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	// Get user ID from email
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
 	// Parse request body
 	var requestData struct {
+		UserID   int  `json:"user_id"`
 		Plotting bool `json:"plotting"`
 	}
-	err = json.NewDecoder(r.Body).Decode(&requestData)
+	err := json.NewDecoder(r.Body).Decode(&requestData)
 	if err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	// Update Min/Max setting in the database
-	err = dbService.UpdateGraphing(userID, requestData.Plotting)
+	err = dbService.UpdateGraphing(requestData.UserID, requestData.Plotting)
 	if err != nil {
 		http.Error(w, "Failed to update graphing setting", http.StatusInternalServerError)
 		return
