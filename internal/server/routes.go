@@ -790,7 +790,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	// Decode request body
 	var requestData struct {
-		userID	  int     `json:"user_id"`
+		UserID	  int     `json:"user_id"`
 		Name      string  `json:"name"`
 		StartTime string  `json:"start_time"`
 		EndTime   string  `json:"end_time"`
@@ -813,14 +813,14 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("Received request data: %+v\n", requestData)
 
 	// Insert session into database and get the session ID
-	sessionID, err := dbService.CreateSession(requestData.Name, requestData.userID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
+	sessionID, err := dbService.CreateSession(requestData.Name, requestData.UserID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
 	if err != nil {
 		fmt.Println("CreateSession Error: Failed to create session", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
 
-	log.Println("Session created successfully for user:", requestData.userID)
+	log.Println("Session created successfully for user:", requestData.UserID)
 
 	// Return session ID in the response
 	w.WriteHeader(http.StatusOK)
