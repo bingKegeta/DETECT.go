@@ -994,7 +994,7 @@ func handleUpdateMinMaxVar(w http.ResponseWriter, r *http.Request) {
 		UserID int  `json: "user_id"`
 	}
 
-	err = dbService.UpdateUserMinMaxVar(requestBody.UserID)
+	err := dbService.UpdateUserMinMaxVar(requestBody.UserID)
 	if err != nil {
 		http.Error(w, "Failed to update variance min/max settings", http.StatusInternalServerError)
 		return
@@ -1037,7 +1037,7 @@ func handleUpdateMinMaxAcc(w http.ResponseWriter, r *http.Request) {
 		UserID int  `json: "user_id"`
 	}
 
-	err = dbService.UpdateUserMinMaxAcc(requestBody.UserID)
+	err := dbService.UpdateUserMinMaxAcc(requestBody.UserID)
 	if err != nil {
 		http.Error(w, "Failed to update acceleration min/max settings", http.StatusInternalServerError)
 		return
@@ -1080,7 +1080,7 @@ func handleSetMinMax(w http.ResponseWriter, r *http.Request) {
 		UserID int  `json: "user_id"`
 		MinMax bool `json:"min_max"`
 	}
-	err = json.NewDecoder(r.Body).Decode(&requestBody)
+	err := json.NewDecoder(r.Body).Decode(&requestBody)
 	if err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
