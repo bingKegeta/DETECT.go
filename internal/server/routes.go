@@ -311,6 +311,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	var requestData struct {
+		userID    int `json:"user_id"`
 		SessionID int `json:"session_id"`
 	}
 
@@ -787,36 +788,13 @@ func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	// Retrieve token from cookie
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		fmt.Println("CreateSession Error: Missing token")
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	// Validate token and get user email
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		fmt.Println("CreateSession Error: Invalid token or failed to get user", err)
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	// Get user ID from email
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		fmt.Println("CreateSession Error: User not found", err)
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
+	
 	// Log the user ID for debugging
 	fmt.Printf("User ID for %s: %d\n", email, userID)
 
 	// Decode request body
 	var requestData struct {
+		userID	  int     `json:"user_id"`
 		Name      string  `json:"name"`
 		StartTime string  `json:"start_time"`
 		EndTime   string  `json:"end_time"`
@@ -839,14 +817,14 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("Received request data: %+v\n", requestData)
 
 	// Insert session into database and get the session ID
-	sessionID, err := dbService.CreateSession(requestData.Name, userID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
+	sessionID, err := dbService.CreateSession(requestData.Name, requestData.userID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
 	if err != nil {
 		fmt.Println("CreateSession Error: Failed to create session", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
 
-	log.Println("Session created successfully for user:", userID)
+	log.Println("Session created successfully for user:", requestData.userID)
 
 	// Return session ID in the response
 	w.WriteHeader(http.StatusOK)
@@ -892,38 +870,17 @@ func singleUpdate(state *AnalysisState, t, x, y, varMin, varMax, accMin, accMax 
 
 func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		userID	    int         `json:"user_id"`
 		Timestamp   float64     `json:"timestamp"`
 		Coordinates [][]float64 `json:"coordinates"`
 	}
 
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		log.Printf("Error reading cookie: %v", err)
-		http.Error(w, "Token cookie not found", http.StatusUnauthorized)
-		return
-	}
-
-	token := cookie.Value
 	dbService := database.New()
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("JSON decode error: %v", err)
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil {
-		log.Printf("Error getting user by token: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	if !valid {
-		log.Printf("Invalid token")
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	log.Printf("Token belongs to user: %s", email)
 
 	state := &AnalysisState{}
 	var results []map[string]float64
@@ -953,44 +910,20 @@ func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePostAnalysis(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		userID	    int 	`json:"user_id"`
 		Timestamp   float64     `json:"timestamp"`
 		Coordinates [][]float64 `json:"coordinates"`
 	}
 
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		log.Printf("Error reading cookie: %v", err)
-		http.Error(w, "Token cookie not found", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
 	dbService := database.New()
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil {
-		log.Printf("Error getting user by token: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	if !valid {
-		log.Printf("Invalid token")
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
-		return
-	}
 
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
-	varMin, varMax, err := dbService.GetUserMinMaxVar(userID)
+	varMin, varMax, err := dbService.GetUserMinMaxVar(requestData.userID)
 	if err != nil {
 		http.Error(w, "Failed to retrieve variance min/max", http.StatusInternalServerError)
 		return
 	}
 
-	accMin, accMax, err := dbService.GetUserMinMaxAcc(userID)
+	accMin, accMax, err := dbService.GetUserMinMaxAcc(requestData.userID)
 	if err != nil {
 		http.Error(w, "Failed to retrieve acceleration min/max", http.StatusInternalServerError)
 		return
@@ -1057,26 +990,8 @@ func handleInsertAnalysis(w http.ResponseWriter, r *http.Request) {
 func handleUpdateSensitivity(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
 	var requestData struct {
+		userID      int     `json:"user_id"`
 		Sensitivity float64 `json:"sensitivity"`
 	}
 	err = json.NewDecoder(r.Body).Decode(&requestData)
@@ -1085,7 +1000,7 @@ func handleUpdateSensitivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = dbService.UpdateSensitivity(userID, requestData.Sensitivity)
+	err = dbService.UpdateSensitivity(requestData.userID, requestData.Sensitivity)
 	if err != nil {
 		http.Error(w, "Failed to update sensitivity", http.StatusInternalServerError)
 		return
@@ -1098,22 +1013,10 @@ func handleUpdateSensitivity(w http.ResponseWriter, r *http.Request) {
 func handleGetSensitivity(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	cookie, err := r.Cookie("token")
+	userIDStr := r.URL.Query().Get("user_id")
+    	userID, err := strconv.Atoi(userIDStr)
 	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
+		http.Error(w, "Invalid user id", http.StatusBadRequest)
 		return
 	}
 
