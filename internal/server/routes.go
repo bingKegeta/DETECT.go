@@ -990,26 +990,11 @@ func handleGetSensitivity(w http.ResponseWriter, r *http.Request) {
 func handleUpdateMinMaxVar(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
+	var requestBody struct {
+		UserID int  `json: "user_id"`
 	}
 
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
-	err = dbService.UpdateUserMinMaxVar(userID)
+	err = dbService.UpdateUserMinMaxVar(requestBody.UserID)
 	if err != nil {
 		http.Error(w, "Failed to update variance min/max settings", http.StatusInternalServerError)
 		return
@@ -1022,22 +1007,10 @@ func handleUpdateMinMaxVar(w http.ResponseWriter, r *http.Request) {
 func handleGetMinMaxVar(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	cookie, err := r.Cookie("token")
+	userIDStr := r.URL.Query().Get("user_id")
+    	userID, err := strconv.Atoi(userIDStr)
 	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
+		http.Error(w, "Invalid user id", http.StatusBadRequest)
 		return
 	}
 
@@ -1060,26 +1033,11 @@ func handleGetMinMaxVar(w http.ResponseWriter, r *http.Request) {
 func handleUpdateMinMaxAcc(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
+	var requestBody struct {
+		UserID int  `json: "user_id"`
 	}
 
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
-	err = dbService.UpdateUserMinMaxAcc(userID)
+	err = dbService.UpdateUserMinMaxAcc(requestBody.UserID)
 	if err != nil {
 		http.Error(w, "Failed to update acceleration min/max settings", http.StatusInternalServerError)
 		return
@@ -1092,22 +1050,10 @@ func handleUpdateMinMaxAcc(w http.ResponseWriter, r *http.Request) {
 func handleGetMinMaxAcc(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	cookie, err := r.Cookie("token")
+	userIDStr := r.URL.Query().Get("user_id")
+    	userID, err := strconv.Atoi(userIDStr)
 	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
+		http.Error(w, "Invalid user id", http.StatusBadRequest)
 		return
 	}
 
@@ -1130,26 +1076,8 @@ func handleGetMinMaxAcc(w http.ResponseWriter, r *http.Request) {
 func handleSetMinMax(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
-
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
 	var requestBody struct {
+		UserID int  `json: "user_id"`
 		MinMax bool `json:"min_max"`
 	}
 	err = json.NewDecoder(r.Body).Decode(&requestBody)
@@ -1158,7 +1086,7 @@ func handleSetMinMax(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = dbService.UpdateMinMaxSetting(userID, requestBody.MinMax)
+	err = dbService.UpdateMinMaxSetting(requestBody.UserID, requestBody.MinMax)
 	if err != nil {
 		http.Error(w, "Failed to update min_max setting", http.StatusInternalServerError)
 		return
