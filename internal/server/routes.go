@@ -871,7 +871,7 @@ func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 		Coordinates [][]float64 `json:"coordinates"`
 	}
 
-	dbService := database.New()
+	//dbService := database.New()
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("JSON decode error: %v", err)
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -913,13 +913,13 @@ func (s *Server) handlePostAnalysis(w http.ResponseWriter, r *http.Request) {
 
 	dbService := database.New()
 
-	varMin, varMax, err := dbService.GetUserMinMaxVar(requestData.userID)
+	varMin, varMax, err := dbService.GetUserMinMaxVar(req.userID)
 	if err != nil {
 		http.Error(w, "Failed to retrieve variance min/max", http.StatusInternalServerError)
 		return
 	}
 
-	accMin, accMax, err := dbService.GetUserMinMaxAcc(requestData.userID)
+	accMin, accMax, err := dbService.GetUserMinMaxAcc(req.userID)
 	if err != nil {
 		http.Error(w, "Failed to retrieve acceleration min/max", http.StatusInternalServerError)
 		return
@@ -990,7 +990,7 @@ func handleUpdateSensitivity(w http.ResponseWriter, r *http.Request) {
 		userID      int     `json:"user_id"`
 		Sensitivity float64 `json:"sensitivity"`
 	}
-	err = json.NewDecoder(r.Body).Decode(&requestData)
+	err := json.NewDecoder(r.Body).Decode(&requestData)
 	if err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
