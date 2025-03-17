@@ -788,10 +788,6 @@ func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
-	
-	// Log the user ID for debugging
-	fmt.Printf("User ID for %s: %d\n", email, userID)
-
 	// Decode request body
 	var requestData struct {
 		userID	  int     `json:"user_id"`
@@ -806,7 +802,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("Request Data: ", requestData)
 
-	err = json.NewDecoder(r.Body).Decode(&requestData)
+	err := json.NewDecoder(r.Body).Decode(&requestData)
 	if err != nil {
 		fmt.Println("CreateSession Error: Invalid request body", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -817,7 +813,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("Received request data: %+v\n", requestData)
 
 	// Insert session into database and get the session ID
-	sessionID, err := dbService.CreateSession(requestData.Name, requestData.userID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
+	sessionID, err = dbService.CreateSession(requestData.Name, requestData.userID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
 	if err != nil {
 		fmt.Println("CreateSession Error: Failed to create session", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
