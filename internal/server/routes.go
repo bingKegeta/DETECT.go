@@ -987,7 +987,7 @@ func handleUpdateSensitivity(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	var requestData struct {
-		userID      int     `json:"user_id"`
+		UserID      int     `json:"user_id"`
 		Sensitivity float64 `json:"sensitivity"`
 	}
 	err := json.NewDecoder(r.Body).Decode(&requestData)
@@ -996,7 +996,7 @@ func handleUpdateSensitivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = dbService.UpdateSensitivity(requestData.userID, requestData.Sensitivity)
+	err = dbService.UpdateSensitivity(requestData.UserID, requestData.Sensitivity)
 	if err != nil {
 		http.Error(w, "Failed to update sensitivity", http.StatusInternalServerError)
 		return
