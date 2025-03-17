@@ -263,40 +263,42 @@ func handleUpdateGraphing(w http.ResponseWriter, r *http.Request) {
 func handleUpdateNormalization(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
+	// ! Not needed anymore
 	// Retrieve token from cookie
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
-		return
-	}
-	token := cookie.Value
+	// cookie, err := r.Cookie("token")
+	// if err != nil {
+	// 	http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+	// 	return
+	// }
+	// token := cookie.Value
 
 	// Get email associated with the token
-	email, valid, err := dbService.GetUserByToken(token)
-	if err != nil || !valid {
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
-		return
-	}
+	// email, valid, err := dbService.GetUserByToken(token)
+	// if err != nil || !valid {
+	// 	http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+	// 	return
+	// }
 
-	// Get user ID from email
-	userID, err := dbService.GetUserIDByEmail(email)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
+	// // Get user ID from email
+	// userID, err := dbService.GetUserIDByEmail(email)
+	// if err != nil {
+	// 	http.Error(w, "User not found", http.StatusNotFound)
+	// 	return
+	// }
 
 	// Parse request body
 	var requestData struct {
+		UserID	  int  `json:"user_id"`
 		Normalization bool `json:"normalization"`
 	}
-	err = json.NewDecoder(r.Body).Decode(&requestData)
+	err := json.NewDecoder(r.Body).Decode(&requestData)
 	if err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	// Update normalization setting in database
-	err = dbService.UpdateNormalization(userID, requestData.Normalization)
+	err = dbService.UpdateNormalization(requestData.UserID, requestData.Normalization)
 	if err != nil {
 		http.Error(w, "Failed to update normalization", http.StatusInternalServerError)
 		return
@@ -311,7 +313,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	var requestData struct {
-		userID    int `json:"user_id"`
+		UserID    int `json:"user_id"`
 		SessionID int `json:"session_id"`
 	}
 
@@ -866,7 +868,7 @@ func singleUpdate(state *AnalysisState, t, x, y, varMin, varMax, accMin, accMax 
 
 func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		userID	    int         `json:"user_id"`
+		UserID	    int         `json:"user_id"`
 		Timestamp   float64     `json:"timestamp"`
 		Coordinates [][]float64 `json:"coordinates"`
 	}
@@ -906,20 +908,20 @@ func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePostAnalysis(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		userID	    int 	`json:"user_id"`
+		UserID	    int 	`json:"user_id"`
 		Timestamp   float64     `json:"timestamp"`
 		Coordinates [][]float64 `json:"coordinates"`
 	}
 
 	dbService := database.New()
 
-	varMin, varMax, err := dbService.GetUserMinMaxVar(req.userID)
+	varMin, varMax, err := dbService.GetUserMinMaxVar(req.UserID)
 	if err != nil {
 		http.Error(w, "Failed to retrieve variance min/max", http.StatusInternalServerError)
 		return
 	}
 
-	accMin, accMax, err := dbService.GetUserMinMaxAcc(req.userID)
+	accMin, accMax, err := dbService.GetUserMinMaxAcc(req.UserID)
 	if err != nil {
 		http.Error(w, "Failed to retrieve acceleration min/max", http.StatusInternalServerError)
 		return
