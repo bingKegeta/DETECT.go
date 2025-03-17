@@ -813,7 +813,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("Received request data: %+v\n", requestData)
 
 	// Insert session into database and get the session ID
-	sessionID, err = dbService.CreateSession(requestData.Name, requestData.userID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
+	sessionID, err := dbService.CreateSession(requestData.Name, requestData.userID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
 	if err != nil {
 		fmt.Println("CreateSession Error: Failed to create session", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
