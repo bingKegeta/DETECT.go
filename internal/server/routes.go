@@ -13,7 +13,6 @@ import (
 
 	//"strconv"
 
-	"DETECT.go/internal/analysis"
 	"DETECT.go/internal/database"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -48,19 +47,21 @@ func init() {
 
 // WebSocketHandler upgrades the connection and handles communication.
 func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
+	// You can add session validation/authentication here.
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
 		http.Error(w, "user_id is required", http.StatusUnauthorized)
 		return
 	}
 
+	// Correctly call Upgrade on the struct instance
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(w, r, nil) // Call the method on the struct, not a pointer
 	if err != nil {
 		http.Error(w, "Failed to upgrade connection", http.StatusInternalServerError)
 		return
@@ -97,56 +98,18 @@ func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Read messages from the client with proper synchronization.
+	// Read messages from the client.
 	for {
 		messageType, message, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("read error from %s: %v", userID, err)
 			break
 		}
-		
-		// Handle the message concurrently in the same goroutine for each client.
-		go func() {
-			// Parse the incoming JSON message
-			var gazeData struct {
-				Time float64 `json:"time"`
-				X    float64 `json:"x"`
-				Y    float64 `json:"y"`
-			}
-			if err := json.Unmarshal(message, &gazeData); err != nil {
-				log.Println("Error parsing WebSocket message:", err)
-				return
-			}
-
-			// Set default sensitivity to 1.0
-			defaultSensitivity := 1.0
-
-			// Analyze gaze data with proper locking for concurrency
-			variance, acceleration, probability := analysis.AnalyzeGazeData(gazeData.Time, gazeData.X, gazeData.Y, defaultSensitivity)
-
-			// Prepare response
-			analysisResponse := struct {
-				Variance     float64 `json:"variance"`
-				Acceleration float64 `json:"acceleration"`
-				Probability  float64 `json:"probability"`
-			}{
-				Variance:     variance,
-				Acceleration: acceleration,
-				Probability:  probability,
-			}
-
-			// Marshal the response into JSON
-			responseJSON, err := json.Marshal(analysisResponse)
-			if err != nil {
-				log.Println("Error marshaling analysis response:", err)
-				return
-			}
-
-			// Send the response back to the client
-			if err := conn.WriteMessage(messageType, responseJSON); err != nil {
-				log.Printf("write error to %s: %v", userID, err)
-			}
-		}()
+		// Example: echo the message back.
+		if err := conn.WriteMessage(messageType, message); err != nil {
+			log.Printf("write error to %s: %v", userID, err)
+			break
+		}
 	}
 }
 
@@ -783,51 +746,45 @@ func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
-    dbService := database.New()
+	dbService := database.New()
 
-    // Decode request body
-    var requestData struct {
-        UserID      int  `json:"user_id"`
-        Name      string  `json:"name"`
-        StartTime string  `json:"start_time"`
-        EndTime   string  `json:"end_time"`
-        VMin      float64 `json:"v_min"`
-        VMax      float64 `json:"v_max"`
-        AMin      float64 `json:"a_min"`
-        AMax      float64 `json:"a_max"`
-    }
+	// Decode request body
+	var requestData struct {
+		UserID	  int     `json:"user_id"`
+		Name      string  `json:"name"`
+		StartTime string  `json:"start_time"`
+		EndTime   string  `json:"end_time"`
+		VMin      float64 `json:"v_min"`
+		VMax      float64 `json:"v_max"`
+		AMin      float64 `json:"a_min"`
+		AMax      float64 `json:"a_max"`
+	}
 
-    fmt.Println("Request Data: ", requestData)
+	fmt.Println("Request Data: ", requestData)
 
-    err := json.NewDecoder(r.Body).Decode(&requestData)
-    if err != nil {
-        fmt.Println("CreateSession Error: Invalid request body", err)
-        http.Error(w, "Invalid request body", http.StatusBadRequest)
-        return
-    }
+	err := json.NewDecoder(r.Body).Decode(&requestData)
+	if err != nil {
+		fmt.Println("CreateSession Error: Invalid request body", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
 
-    // Log the decoded requestData for debugging
-    fmt.Printf("Received request data: %+v\n", requestData)
-    /*
-    userID, err := strconv.Atoi(requestData.UserID)
-    if err != nil {
-        fmt.Println("Error:", err)
-        return
-    }*/
+	// Log the decoded requestData for debugging
+	fmt.Printf("Received request data: %+v\n", requestData)
 
-    // Insert session into database and get the session ID
-    sessionID, err := dbService.CreateSession(requestData.Name, requestData.UserID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
-    if err != nil {
-        fmt.Println("CreateSession Error: Failed to create session", err)
-        http.Error(w, "Failed to create session", http.StatusInternalServerError)
-        return
-    }
+	// Insert session into database and get the session ID
+	sessionID, err := dbService.CreateSession(requestData.Name, requestData.UserID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
+	if err != nil {
+		fmt.Println("CreateSession Error: Failed to create session", err)
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
 
-    log.Println("Session created successfully for user:", requestData.UserID)
+	log.Println("Session created successfully for user:", requestData.UserID)
 
-    // Return session ID in the response
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte(fmt.Sprintf(`{"message": "Session created successfully", "sessionId": "%d"}`, sessionID)))
+	// Return session ID in the response
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(fmt.Sprintf(`{"message": "Session created successfully", "sessionId": "%d"}`, sessionID)))
 }
 
 type AnalysisState struct {
