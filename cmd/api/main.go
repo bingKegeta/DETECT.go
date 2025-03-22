@@ -1,3 +1,4 @@
+
 package main
 
 import (
@@ -43,6 +44,9 @@ func main() {
 
 	// Create a done channel to signal when the shutdown is complete
 	done := make(chan bool, 1)
+
+	// Start the WebSocket server in a separate goroutine
+	go server.RunWebSocketServer()
 
 	// Run graceful shutdown in a separate goroutine
 	go gracefulShutdown(apiServer, done)
