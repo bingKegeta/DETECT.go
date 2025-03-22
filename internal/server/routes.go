@@ -783,45 +783,51 @@ func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	dbService := database.New()
+    dbService := database.New()
 
-	// Decode request body
-	var requestData struct {
-		UserID	  int     `json:"user_id"`
-		Name      string  `json:"name"`
-		StartTime string  `json:"start_time"`
-		EndTime   string  `json:"end_time"`
-		VMin      float64 `json:"v_min"`
-		VMax      float64 `json:"v_max"`
-		AMin      float64 `json:"a_min"`
-		AMax      float64 `json:"a_max"`
-	}
+    // Decode request body
+    var requestData struct {
+        UserID      int  `json:"user_id"`
+        Name      string  `json:"name"`
+        StartTime string  `json:"start_time"`
+        EndTime   string  `json:"end_time"`
+        VMin      float64 `json:"v_min"`
+        VMax      float64 `json:"v_max"`
+        AMin      float64 `json:"a_min"`
+        AMax      float64 `json:"a_max"`
+    }
 
-	fmt.Println("Request Data: ", requestData)
+    fmt.Println("Request Data: ", requestData)
 
-	err := json.NewDecoder(r.Body).Decode(&requestData)
-	if err != nil {
-		fmt.Println("CreateSession Error: Invalid request body", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
+    err := json.NewDecoder(r.Body).Decode(&requestData)
+    if err != nil {
+        fmt.Println("CreateSession Error: Invalid request body", err)
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        return
+    }
 
-	// Log the decoded requestData for debugging
-	fmt.Printf("Received request data: %+v\n", requestData)
+    // Log the decoded requestData for debugging
+    fmt.Printf("Received request data: %+v\n", requestData)
+    /*
+    userID, err := strconv.Atoi(requestData.UserID)
+    if err != nil {
+        fmt.Println("Error:", err)
+        return
+    }*/
 
-	// Insert session into database and get the session ID
-	sessionID, err := dbService.CreateSession(requestData.Name, requestData.UserID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
-	if err != nil {
-		fmt.Println("CreateSession Error: Failed to create session", err)
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
-		return
-	}
+    // Insert session into database and get the session ID
+    sessionID, err := dbService.CreateSession(requestData.Name, requestData.UserID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
+    if err != nil {
+        fmt.Println("CreateSession Error: Failed to create session", err)
+        http.Error(w, "Failed to create session", http.StatusInternalServerError)
+        return
+    }
 
-	log.Println("Session created successfully for user:", requestData.UserID)
+    log.Println("Session created successfully for user:", requestData.UserID)
 
-	// Return session ID in the response
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf(`{"message": "Session created successfully", "sessionId": "%d"}`, sessionID)))
+    // Return session ID in the response
+    w.WriteHeader(http.StatusOK)
+    w.Write([]byte(fmt.Sprintf(`{"message": "Session created successfully", "sessionId": "%d"}`, sessionID)))
 }
 
 type AnalysisState struct {
