@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"sync"
 	"time"
 
 	//"strconv"
 
+	"DETECT.go/internal/analysis"
 	"DETECT.go/internal/database"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -25,91 +25,103 @@ import (
 
 var jwtSecret []byte
 
-// clientManager maintains active WebSocket connections.
-type clientManager struct {
-	clients map[string]*websocket.Conn
-	mu      sync.Mutex
-}
-
-var manager = clientManager{
-	clients: make(map[string]*websocket.Conn),
-}
-
-func init() {
-	// Read the secret from .env
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		log.Fatalf("JWT_SECRET is not set in the .env file")
-	}
-
-	jwtSecret = []byte(secret)
-}
-
 // WebSocketHandler upgrades the connection and handles communication.
 func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
-	// You can add session validation/authentication here.
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
 		http.Error(w, "user_id is required", http.StatusUnauthorized)
 		return
 	}
 
-	// Correctly call Upgrade on the struct instance
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil) // Call the method on the struct, not a pointer
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		http.Error(w, "Failed to upgrade connection", http.StatusInternalServerError)
 		return
 	}
 
-	// Register client
-	manager.mu.Lock()
-	manager.clients[userID] = conn
-	manager.mu.Unlock()
+	// Handle the WebSocket connection in a separate goroutine
+	go handleConnection(conn)
+}
 
-	// Ensure cleanup on disconnect
-	defer func() {
-		manager.mu.Lock()
-		delete(manager.clients, userID)
-		manager.mu.Unlock()
-		conn.Close()
-	}()
+// handleConnection processes individual WebSocket connections.
+func handleConnection(conn *websocket.Conn) {
+	defer conn.Close()
 
-	// Set up ping/pong to maintain connection health.
+	// Set up ping/pong to maintain connection health
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 
-	// Start a goroutine to send periodic pings.
+	// Periodic ping messages
 	go func() {
-		ticker := time.NewTicker((60 * time.Second * 9) / 10)
+		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				log.Printf("Error sending ping message: %v", err)
 				return
 			}
 		}
 	}()
 
-	// Read messages from the client.
+	// Read messages from the WebSocket connection
 	for {
 		messageType, message, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("read error from %s: %v", userID, err)
+			log.Println("Error reading WebSocket message:", err)
 			break
 		}
-		// Example: echo the message back.
-		if err := conn.WriteMessage(messageType, message); err != nil {
-			log.Printf("write error to %s: %v", userID, err)
-			break
-		}
+
+		// Handle incoming gaze data asynchronously
+		go processGazeData(message, conn, messageType)
+	}
+}
+
+// processGazeData analyzes gaze data and sends the response back to the client.
+func processGazeData(message []byte, conn *websocket.Conn, messageType int) {
+	var gazeData struct {
+		Time float64 `json:"time"`
+		X    float64 `json:"x"`
+		Y    float64 `json:"y"`
+	}
+	if err := json.Unmarshal(message, &gazeData); err != nil {
+		log.Println("Error parsing WebSocket message:", err)
+		return
+	}
+
+	// Set default sensitivity and perform analysis
+	defaultSensitivity := 1.0
+	variance, acceleration, probability := analysis.AnalyzeGazeData(gazeData.Time, gazeData.X, gazeData.Y, defaultSensitivity)
+
+	// Prepare the analysis response
+	analysisResponse := struct {
+		Variance     float64 `json:"variance"`
+		Acceleration float64 `json:"acceleration"`
+		Probability  float64 `json:"probability"`
+	}{
+		Variance:     variance,
+		Acceleration: acceleration,
+		Probability:  probability,
+	}
+
+	// Marshal the response into JSON
+	responseJSON, err := json.Marshal(analysisResponse)
+	if err != nil {
+		log.Println("Error marshaling analysis response:", err)
+		return
+	}
+
+	// Send the response back to the client
+	if err := conn.WriteMessage(messageType, responseJSON); err != nil {
+		log.Printf("Error sending message: %v", err)
 	}
 }
 
@@ -130,7 +142,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 	}
 
 	if !isProd {
-        	corsOptions.AllowedOrigins = []string{"*"}  // Allow all origins in development
+		corsOptions.AllowedOrigins = []string{"*"} // Allow all origins in development
 	}
 	r.Use(cors.Handler(corsOptions))
 
@@ -171,7 +183,7 @@ func handleUpdateMinMaxSetting(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request body
 	var requestData struct {
-		UserID   int  `json:"user_id"`
+		UserID int  `json:"user_id"`
 		MinMax bool `json:"minMax"`
 	}
 	err := json.NewDecoder(r.Body).Decode(&requestData)
@@ -246,7 +258,7 @@ func handleUpdateNormalization(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request body
 	var requestData struct {
-		UserID	  int  `json:"user_id"`
+		UserID        int  `json:"user_id"`
 		Normalization bool `json:"normalization"`
 	}
 	err := json.NewDecoder(r.Body).Decode(&requestData)
@@ -295,12 +307,12 @@ func handleGetUserSettings(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	userIDStr := r.URL.Query().Get("user_id")
-    	userID, err := strconv.Atoi(userIDStr)
+	userID, err := strconv.Atoi(userIDStr)
 	if err != nil {
 		http.Error(w, "Invalid user id", http.StatusBadRequest)
 		return
 	}
-    	fmt.Println("Retrieved user ID from URL:", userID)
+	fmt.Println("Retrieved user ID from URL:", userID)
 
 	plotting, affine, minMax, sensitivity, err := dbService.GetUserSettings(userID)
 	if err != nil {
@@ -332,81 +344,81 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getAuthCallback(w http.ResponseWriter, r *http.Request) {
-    provider := chi.URLParam(r, "provider")
-    fmt.Printf("Auth callback for provider: %s\n", provider)
-    
-    // Get the session to see if it exists in the callback
-    session, _ := gothic.Store.Get(r, gothic.SessionName)
-    fmt.Printf("Session in callback - Values: %v\n", session.Values)
-    
-    // Override GetProviderName just for this request
-    gothic.GetProviderName = func(req *http.Request) (string, error) {
-        return provider, nil
-    }
+	provider := chi.URLParam(r, "provider")
+	fmt.Printf("Auth callback for provider: %s\n", provider)
 
-    // Complete the OAuth flow
-    user, err := gothic.CompleteUserAuth(w, r)
-    if err != nil {
-        fmt.Printf("Auth error: %v\n", err)
-        http.Error(w, "Could not complete authentication: "+err.Error(), http.StatusInternalServerError)
-        return
-    }
+	// Get the session to see if it exists in the callback
+	session, _ := gothic.Store.Get(r, gothic.SessionName)
+	fmt.Printf("Session in callback - Values: %v\n", session.Values)
 
-    // Debug: Print user details
-    fmt.Printf("Authenticated user: %+v\n", user)
+	// Override GetProviderName just for this request
+	gothic.GetProviderName = func(req *http.Request) (string, error) {
+		return provider, nil
+	}
 
-    dbService := database.New()
+	// Complete the OAuth flow
+	user, err := gothic.CompleteUserAuth(w, r)
+	if err != nil {
+		fmt.Printf("Auth error: %v\n", err)
+		http.Error(w, "Could not complete authentication: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-    // Check if the user exists
-    exists, err := dbService.UserExists(user.Email)
-    if err != nil {
-        http.Error(w, "Database error", http.StatusInternalServerError)
-        return
-    }
+	// Debug: Print user details
+	fmt.Printf("Authenticated user: %+v\n", user)
 
-    if (!exists) {
-        // Insert the OAuth user into the database
-        _, err := dbService.InsertUser(user.Email, "")
-        if err != nil {
-            http.Error(w, "Failed to log OAuth user into the database", http.StatusInternalServerError)
-            return
-        }
-    }
+	dbService := database.New()
 
-    // Generate JWT for OAuth user
-    claims := &jwt.RegisteredClaims{
-        Subject:   user.Email,
-        ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-    }
-    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-    signedToken, err := token.SignedString(jwtSecret)
-    if err != nil {
-        http.Error(w, "Failed to generate token", http.StatusInternalServerError)
-        return
-    }
+	// Check if the user exists
+	exists, err := dbService.UserExists(user.Email)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
 
-    // Insert the JWT token into the database
-    err = dbService.InsertUserToken(user.Email, signedToken)
-    if err != nil {
-        http.Error(w, "Failed to insert token into the database", http.StatusInternalServerError)
-        return
-    }
+	if !exists {
+		// Insert the OAuth user into the database
+		_, err := dbService.InsertUser(user.Email, "")
+		if err != nil {
+			http.Error(w, "Failed to log OAuth user into the database", http.StatusInternalServerError)
+			return
+		}
+	}
 
-    isProd := os.Getenv("IS_PROD") == "true"
+	// Generate JWT for OAuth user
+	claims := &jwt.RegisteredClaims{
+		Subject:   user.Email,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signedToken, err := token.SignedString(jwtSecret)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
 
-    // Set the JWT token in a secure, HTTP-only cookie
-    http.SetCookie(w, &http.Cookie{
-        Name:     "token",
-        Value:    signedToken,
-        Expires:  time.Now().Add(24 * time.Hour),
-        HttpOnly: true,
-        Secure:   isProd, // Set to true in production
-        Path:     "/",
-        SameSite: http.SameSiteNoneMode,
-    })
+	// Insert the JWT token into the database
+	err = dbService.InsertUserToken(user.Email, signedToken)
+	if err != nil {
+		http.Error(w, "Failed to insert token into the database", http.StatusInternalServerError)
+		return
+	}
 
-    // Redirect to the frontend dashboard
-    http.Redirect(w, r, os.Getenv("CLIENT_URL")+"/dashboard", http.StatusFound)
+	isProd := os.Getenv("IS_PROD") == "true"
+
+	// Set the JWT token in a secure, HTTP-only cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "token",
+		Value:    signedToken,
+		Expires:  time.Now().Add(24 * time.Hour),
+		HttpOnly: true,
+		Secure:   isProd, // Set to true in production
+		Path:     "/",
+		SameSite: http.SameSiteNoneMode,
+	})
+
+	// Redirect to the frontend dashboard
+	http.Redirect(w, r, os.Getenv("CLIENT_URL")+"/dashboard", http.StatusFound)
 }
 
 func jsonErrorResponse(w http.ResponseWriter, message string, statusCode int) {
@@ -485,8 +497,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := dbService.GetUserIDByEmail(req.Email)
 	if err != nil {
-    		http.Error(w, "User not found", http.StatusNotFound)
-    		return
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
 	}
 
 	// Send response with JWT
@@ -494,8 +506,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Login successful",
-		"isProd": isProd,
-		"userID": userID,
+		"isProd":  isProd,
+		"userID":  userID,
 		// "token":   signedToken,
 	})
 }
@@ -609,23 +621,23 @@ func handleGetUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startAuth(w http.ResponseWriter, r *http.Request) {
-    provider := chi.URLParam(r, "provider")
-    fmt.Printf("Starting auth for provider: %s\n", provider)
-    
-    // Create a modified request with the provider set correctly
-    req := r.WithContext(r.Context())
-    
-    // Override GetProviderName just for this request
-    gothic.GetProviderName = func(req *http.Request) (string, error) {
-        return provider, nil
-    }
-    
-    // Explicitly save a session with the provider name
-    session, _ := gothic.Store.Get(r, gothic.SessionName)
-    session.Values["provider"] = provider
-    session.Save(r, w)
-    
-    gothic.BeginAuthHandler(w, req)
+	provider := chi.URLParam(r, "provider")
+	fmt.Printf("Starting auth for provider: %s\n", provider)
+
+	// Create a modified request with the provider set correctly
+	req := r.WithContext(r.Context())
+
+	// Override GetProviderName just for this request
+	gothic.GetProviderName = func(req *http.Request) (string, error) {
+		return provider, nil
+	}
+
+	// Explicitly save a session with the provider name
+	session, _ := gothic.Store.Get(r, gothic.SessionName)
+	session.Values["provider"] = provider
+	session.Save(r, w)
+
+	gothic.BeginAuthHandler(w, req)
 }
 
 type Response struct {
@@ -635,7 +647,7 @@ type Response struct {
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("token")
-	if (err == nil && cookie.Value != "") {
+	if err == nil && cookie.Value != "" {
 		dbService := database.New()
 		err := dbService.RemoveUserToken(cookie.Value)
 		if err != nil {
@@ -715,13 +727,13 @@ func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	userIDStr := r.URL.Query().Get("user_id")
-    	userID, err := strconv.Atoi(userIDStr)
+	userID, err := strconv.Atoi(userIDStr)
 	if err != nil {
 		http.Error(w, "Invalid user id", http.StatusBadRequest)
 		return
 	}
 
-    	fmt.Println("Retrieved user ID from URL:", userID)
+	fmt.Println("Retrieved user ID from URL:", userID)
 
 	// Fetch user sessions
 	sessions, err := dbService.GetUserSessions(userID)
@@ -746,51 +758,51 @@ func handleGetUserSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
-    dbService := database.New()
+	dbService := database.New()
 
-    // Decode request body
-    var requestData struct {
-        UserID      int  `json:"user_id"`
-        Name      string  `json:"name"`
-        StartTime string  `json:"start_time"`
-        EndTime   string  `json:"end_time"`
-        VMin      float64 `json:"v_min"`
-        VMax      float64 `json:"v_max"`
-        AMin      float64 `json:"a_min"`
-        AMax      float64 `json:"a_max"`
-    }
+	// Decode request body
+	var requestData struct {
+		UserID    int     `json:"user_id"`
+		Name      string  `json:"name"`
+		StartTime string  `json:"start_time"`
+		EndTime   string  `json:"end_time"`
+		VMin      float64 `json:"v_min"`
+		VMax      float64 `json:"v_max"`
+		AMin      float64 `json:"a_min"`
+		AMax      float64 `json:"a_max"`
+	}
 
-    fmt.Println("Request Data: ", requestData)
+	fmt.Println("Request Data: ", requestData)
 
-    err := json.NewDecoder(r.Body).Decode(&requestData)
-    if err != nil {
-        fmt.Println("CreateSession Error: Invalid request body", err)
-        http.Error(w, "Invalid request body", http.StatusBadRequest)
-        return
-    }
+	err := json.NewDecoder(r.Body).Decode(&requestData)
+	if err != nil {
+		fmt.Println("CreateSession Error: Invalid request body", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
 
-    // Log the decoded requestData for debugging
-    fmt.Printf("Received request data: %+v\n", requestData)
-    /*
-    userID, err := strconv.Atoi(requestData.UserID)
-    if err != nil {
-        fmt.Println("Error:", err)
-        return
-    }*/
+	// Log the decoded requestData for debugging
+	fmt.Printf("Received request data: %+v\n", requestData)
+	/*
+	   userID, err := strconv.Atoi(requestData.UserID)
+	   if err != nil {
+	       fmt.Println("Error:", err)
+	       return
+	   }*/
 
-    // Insert session into database and get the session ID
-    sessionID, err := dbService.CreateSession(requestData.Name, requestData.UserID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
-    if err != nil {
-        fmt.Println("CreateSession Error: Failed to create session", err)
-        http.Error(w, "Failed to create session", http.StatusInternalServerError)
-        return
-    }
+	// Insert session into database and get the session ID
+	sessionID, err := dbService.CreateSession(requestData.Name, requestData.UserID, requestData.StartTime, requestData.EndTime, requestData.VMin, requestData.VMax, requestData.AMin, requestData.AMax)
+	if err != nil {
+		fmt.Println("CreateSession Error: Failed to create session", err)
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
 
-    log.Println("Session created successfully for user:", requestData.UserID)
+	log.Println("Session created successfully for user:", requestData.UserID)
 
-    // Return session ID in the response
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte(fmt.Sprintf(`{"message": "Session created successfully", "sessionId": "%d"}`, sessionID)))
+	// Return session ID in the response
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(fmt.Sprintf(`{"message": "Session created successfully", "sessionId": "%d"}`, sessionID)))
 }
 
 type AnalysisState struct {
@@ -832,7 +844,7 @@ func singleUpdate(state *AnalysisState, t, x, y, varMin, varMax, accMin, accMax 
 
 func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserID	    int         `json:"user_id"`
+		UserID      int         `json:"user_id"`
 		Timestamp   float64     `json:"timestamp"`
 		Coordinates [][]float64 `json:"coordinates"`
 	}
@@ -872,7 +884,7 @@ func (s *Server) processCoordsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePostAnalysis(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserID	    int 	`json:"user_id"`
+		UserID      int         `json:"user_id"`
 		Timestamp   float64     `json:"timestamp"`
 		Coordinates [][]float64 `json:"coordinates"`
 	}
@@ -976,7 +988,7 @@ func handleGetSensitivity(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	userIDStr := r.URL.Query().Get("user_id")
-    	userID, err := strconv.Atoi(userIDStr)
+	userID, err := strconv.Atoi(userIDStr)
 	if err != nil {
 		http.Error(w, "Invalid user id", http.StatusBadRequest)
 		return
@@ -997,7 +1009,7 @@ func handleUpdateMinMaxVar(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	var requestBody struct {
-		UserID int  `json: "user_id"`
+		UserID int `json: "user_id"`
 	}
 
 	err := dbService.UpdateUserMinMaxVar(requestBody.UserID)
@@ -1014,7 +1026,7 @@ func handleGetMinMaxVar(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	userIDStr := r.URL.Query().Get("user_id")
-    	userID, err := strconv.Atoi(userIDStr)
+	userID, err := strconv.Atoi(userIDStr)
 	if err != nil {
 		http.Error(w, "Invalid user id", http.StatusBadRequest)
 		return
@@ -1040,7 +1052,7 @@ func handleUpdateMinMaxAcc(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	var requestBody struct {
-		UserID int  `json: "user_id"`
+		UserID int `json: "user_id"`
 	}
 
 	err := dbService.UpdateUserMinMaxAcc(requestBody.UserID)
@@ -1057,7 +1069,7 @@ func handleGetMinMaxAcc(w http.ResponseWriter, r *http.Request) {
 	dbService := database.New()
 
 	userIDStr := r.URL.Query().Get("user_id")
-    	userID, err := strconv.Atoi(userIDStr)
+	userID, err := strconv.Atoi(userIDStr)
 	if err != nil {
 		http.Error(w, "Invalid user id", http.StatusBadRequest)
 		return
