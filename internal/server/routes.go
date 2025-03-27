@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -72,16 +73,37 @@ func handleConnection(conn *websocket.Conn) {
 		}
 	}()
 
-	// Read messages from the WebSocket connection
+	// Read messages with context timeout
 	for {
-		messageType, message, err := conn.ReadMessage()
-		if err != nil {
-			log.Println("Error reading WebSocket message:", err)
-			break
-		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-		// Handle incoming gaze data asynchronously
-		go processGazeData(message, conn, messageType)
+		messageChan := make(chan []byte)
+		errChan := make(chan error)
+		messageTypeChan := make(chan int) // New channel for messageType
+
+		// Read message in a goroutine
+		go func() {
+			messageType, message, err := conn.ReadMessage()
+			if err != nil {
+				errChan <- err
+				return
+			}
+			messageTypeChan <- messageType // Send messageType to the channel
+			messageChan <- message
+		}()
+
+		select {
+		case <-ctx.Done():
+			log.Println("Timeout reached while waiting for WebSocket message")
+			return
+		case err := <-errChan:
+			log.Println("Error reading WebSocket message:", err)
+			return
+		case message := <-messageChan:
+			messageType := <-messageTypeChan // Receive messageType from the channel
+			processGazeData(message, conn, messageType)
+		}
 	}
 }
 
@@ -119,9 +141,26 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int) {
 		return
 	}
 
-	// Send the response back to the client
-	if err := conn.WriteMessage(messageType, responseJSON); err != nil {
-		log.Printf("Error sending message: %v", err)
+	// Create a context with timeout for the WebSocket write operation
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // Timeout after 5 seconds
+	defer cancel()
+
+	// Channel to handle the result of the WebSocket write operation
+	errChan := make(chan error)
+
+	// Perform the write operation in a goroutine
+	go func() {
+		errChan <- conn.WriteMessage(messageType, responseJSON)
+	}()
+
+	// Wait for either success or timeout
+	select {
+	case err := <-errChan:
+		if err != nil {
+			log.Printf("Error sending message: %v", err)
+		}
+	case <-ctx.Done():
+		log.Println("Timeout reached while sending message")
 	}
 }
 
