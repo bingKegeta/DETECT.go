@@ -145,7 +145,7 @@ func handleConnection(conn *websocket.Conn, userID string) {
 			break
 		}
 
-		processGazeData(msg, conn, messageType, userID)
+		go processGazeData(msg, conn, messageType, userID)
 	}
 }
 
