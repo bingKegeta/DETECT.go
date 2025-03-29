@@ -5,15 +5,16 @@ import (
 	"sync"
 )
 
-var (
-	// userDataMap stores user-specific gaze data
-	userDataMap sync.Map // sync.Map to store user-specific gaze data
-)
-
-// UserData struct holds the tracking data for each user
-type UserData struct {
-	lastX, lastY, lastTime, lastVelocity float64
+// Define a struct to hold both the user data and the mutex
+type UserDataWithLock struct {
+	mu            sync.Mutex // Mutex to ensure safe concurrent access
+	lastX, lastY  float64
+	lastTime      float64
+	lastVelocity  float64
 }
+
+// userDataMap stores user-specific gaze data with an associated mutex
+var userDataMap sync.Map // sync.Map to store user-specific gaze data
 
 // ClipAndScale ensures values are clipped and normalized for output
 func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
@@ -23,11 +24,14 @@ func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
 }
 
 // AnalyzeGazeData processes gaze data and computes movement metrics
-// sensitivity is a value between 0.75 and 1.25
 func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
 	// Get or initialize user data for tracking
-	userDataInterface, _ := userDataMap.LoadOrStore(userID, &UserData{})
-	userData := userDataInterface.(*UserData)
+	userDataInterface, _ := userDataMap.LoadOrStore(userID, &UserDataWithLock{})
+	userData := userDataInterface.(*UserDataWithLock)
+
+	// Lock user data for exclusive access
+	userData.mu.Lock()
+	defer userData.mu.Unlock()
 
 	// Validate sensitivity value (between 0.75 and 1.25). If invalid, use default 1.0
 	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
