@@ -9,9 +9,8 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
-
-	//"strconv"
 
 	"DETECT.go/internal/analysis"
 	"DETECT.go/internal/database"
@@ -26,88 +25,64 @@ import (
 
 var jwtSecret []byte
 
-// WebSocketHandler upgrades the connection and handles communication.
+// Map to track WebSocket connections per user
+var connections = make(map[string]*websocket.Conn)
+var connectionsMutex = sync.Mutex{}
+
+// Upgrader to handle WebSocket connections
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// WebSocketHandler manages new WebSocket connections
 func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
+	// Extract user_id from query parameters
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
 		http.Error(w, "user_id is required", http.StatusUnauthorized)
 		return
 	}
 
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-	}
-
+	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		http.Error(w, "Failed to upgrade connection", http.StatusInternalServerError)
 		return
 	}
 
-	// Handle the WebSocket connection in a separate goroutine
-	go handleConnection(conn)
+	// Store connection for this user
+	connectionsMutex.Lock()
+	connections[userID] = conn
+	connectionsMutex.Unlock()
+
+	// Handle the WebSocket connection
+	go handleConnection(conn, userID)
 }
 
-// handleConnection processes individual WebSocket connections.
-func handleConnection(conn *websocket.Conn) {
-	defer conn.Close()
-
-	// Set up ping/pong to maintain connection health
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
-
-	// Periodic ping messages
-	go func() {
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				log.Printf("Error sending ping message: %v", err)
-				return
-			}
-		}
+// handleConnection manages WebSocket messages for a specific user
+func handleConnection(conn *websocket.Conn, userID string) {
+	defer func() {
+		// Remove the connection when user disconnects
+		connectionsMutex.Lock()
+		delete(connections, userID)
+		connectionsMutex.Unlock()
+		conn.Close()
 	}()
 
-	// Read messages with context timeout
+	// Read messages from WebSocket
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		messageChan := make(chan []byte)
-		errChan := make(chan error)
-		messageTypeChan := make(chan int) // New channel for messageType
-
-		// Read message in a goroutine
-		go func() {
-			messageType, message, err := conn.ReadMessage()
-			if err != nil {
-				errChan <- err
-				return
-			}
-			messageTypeChan <- messageType // Send messageType to the channel
-			messageChan <- message
-		}()
-
-		select {
-		case <-ctx.Done():
-			log.Println("Timeout reached while waiting for WebSocket message")
-			return
-		case err := <-errChan:
-			log.Println("Error reading WebSocket message:", err)
-			return
-		case message := <-messageChan:
-			messageType := <-messageTypeChan // Receive messageType from the channel
-			processGazeData(message, conn, messageType)
+		messageType, msg, err := conn.ReadMessage()
+		if err != nil {
+			log.Printf("User %s disconnected: %v", userID, err)
+			break
 		}
+
+		// Process gaze data for this user
+		processGazeData(msg, conn, messageType)
 	}
 }
 
-// processGazeData analyzes gaze data and sends the response back to the client.
+// processGazeData handles gaze data analysis for each user
 func processGazeData(message []byte, conn *websocket.Conn, messageType int) {
 	var gazeData struct {
 		Time float64 `json:"time"`
