@@ -5,7 +5,6 @@ import (
 	"sync"
 )
 
-// Define a struct to hold both the user data and the mutex
 type UserDataWithLock struct {
 	mu            sync.Mutex // Mutex to ensure safe concurrent access
 	lastX, lastY  float64
@@ -24,6 +23,7 @@ func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
 }
 
 // AnalyzeGazeData processes gaze data and computes movement metrics
+// sensitivity is a value between 0.75 and 1.25
 func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
 	// Get or initialize user data for tracking
 	userDataInterface, _ := userDataMap.LoadOrStore(userID, &UserDataWithLock{})
@@ -38,15 +38,19 @@ func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNo
 		sensitivity = 1.0 // Default sensitivity value
 	}
 
+	// Check and initialize on first valid input
+	if userData.lastTime == 0 {
+		// Set the user’s first values if not initialized
+		if time > 0 {
+			userData.lastX, userData.lastY, userData.lastTime = x, y, time
+			return 0.0, 0.0, 0.05 // Default for first detection
+		}
+	}
+
 	// Reset tracking if time goes backward (possible page refresh)
 	if time < userData.lastTime {
 		userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity = 0, 0, 0, 0
-	}
-
-	// Initialize on first valid input
-	if userData.lastTime == 0 {
-		userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity = x, y, time, 0.0
-		return 0.0, 0.0, 0.05 // Default for first detection
+		return 0.0, 0.0, 0.05 // Reset on time anomaly
 	}
 
 	dt := time - userData.lastTime
@@ -54,6 +58,7 @@ func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNo
 		return 0.0, 0.0, 0.05 // No forward time => return middle prob
 	}
 
+	// Compute movement metrics
 	dx := x - userData.lastX
 	dy := y - userData.lastY
 	variance := dx*dx + dy*dy
