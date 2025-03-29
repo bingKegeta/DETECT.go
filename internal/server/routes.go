@@ -25,9 +25,8 @@ import (
 
 var jwtSecret []byte
 
-// Map to track WebSocket connections per user
-var connections = make(map[string]*websocket.Conn)
-var connectionsMutex = sync.Mutex{}
+// Using sync.Map to handle concurrent WebSocket connections
+var connections sync.Map // thread-safe map to track WebSocket connections per user
 
 // Upgrader to handle WebSocket connections
 var upgrader = websocket.Upgrader{
@@ -50,10 +49,8 @@ func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store connection for this user
-	connectionsMutex.Lock()
-	connections[userID] = conn
-	connectionsMutex.Unlock()
+	// Store connection for this user in sync.Map
+	connections.Store(userID, conn)
 
 	// Handle the WebSocket connection
 	go handleConnection(conn, userID)
@@ -63,9 +60,7 @@ func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 func handleConnection(conn *websocket.Conn, userID string) {
 	defer func() {
 		// Remove the connection when user disconnects
-		connectionsMutex.Lock()
-		delete(connections, userID)
-		connectionsMutex.Unlock()
+		connections.Delete(userID)
 		conn.Close()
 	}()
 
@@ -78,12 +73,12 @@ func handleConnection(conn *websocket.Conn, userID string) {
 		}
 
 		// Process gaze data for this user
-		processGazeData(msg, conn, messageType)
+		processGazeData(msg, conn, messageType, userID)
 	}
 }
 
 // processGazeData handles gaze data analysis for each user
-func processGazeData(message []byte, conn *websocket.Conn, messageType int) {
+func processGazeData(message []byte, conn *websocket.Conn, messageType int, userID string) {
 	var gazeData struct {
 		Time float64 `json:"time"`
 		X    float64 `json:"x"`
