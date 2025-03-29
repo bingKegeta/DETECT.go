@@ -25,12 +25,13 @@ import (
 var jwtSecret []byte
 
 var (
-	connections sync.Map // thread-safe map to track WebSocket connections per user
+	userTracking sync.Map // Stores tracking data per user
+	connections  sync.Map // Stores WebSocket connections per user
 )
 
 // UserData struct holds the tracking data for each user
 type UserData struct {
-	mu           sync.Mutex // Mutex to ensure safe concurrent access
+	mu           sync.Mutex
 	lastX, lastY float64
 	lastTime     float64
 	lastVelocity float64
@@ -44,72 +45,57 @@ func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
 }
 
 // AnalyzeGazeData processes gaze data and computes movement metrics
-// sensitivity is a value between 0.75 and 1.25
 func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
-	// Get or initialize user data for tracking
-	userDataInterface, _ := connections.LoadOrStore(userID, &UserData{})
+	userDataInterface, _ := userTracking.LoadOrStore(userID, &UserData{})
 	userData := userDataInterface.(*UserData)
 
-	// Lock user data for exclusive access
 	userData.mu.Lock()
 	defer userData.mu.Unlock()
 
-	// Validate sensitivity value (between 0.75 and 1.25). If invalid, use default 1.0
 	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
-		sensitivity = 1.0 // Default sensitivity value
+		sensitivity = 1.0
 	}
 
-	// Check and initialize on first valid input
 	if userData.lastTime == 0 {
-		// Set the user’s first values if not initialized
 		if time > 0 {
 			userData.lastX, userData.lastY, userData.lastTime = x, y, time
-			return 0.0, 0.0, 0.05 // Default for first detection
+			return 0.0, 0.0, 0.05
 		}
 	}
 
-	// Reset tracking if time goes backward (possible page refresh)
 	if time < userData.lastTime {
 		userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity = 0, 0, 0, 0
-		return 0.0, 0.0, 0.05 // Reset on time anomaly
+		return 0.0, 0.0, 0.05
 	}
 
 	dt := time - userData.lastTime
 	if dt <= 0.0 {
-		return 0.0, 0.0, 0.05 // No forward time => return middle prob
+		return 0.0, 0.0, 0.05
 	}
 
-	// Compute movement metrics
 	dx := x - userData.lastX
 	dy := y - userData.lastY
 	variance := dx*dx + dy*dy
 	velocity := math.Sqrt(variance) / dt
 
-	// Guard against small dt for stability
 	const epsilon = 1e-6
 	acceleration := 0.0
 	if dt > epsilon {
 		acceleration = (velocity - userData.lastVelocity) / dt
 	}
 
-	// Use sensitivity to adjust scaling of varianceNorm and accelerationNorm
 	varianceNorm = ClipAndScale(variance, 4.5e-07, 0.00013, 0.01, 0.95)
 	accelerationNorm = ClipAndScale(acceleration, 0.3, 10.0, 0.01, 0.95)
 
-	// Calculate probability as average of normalized variance and acceleration
 	probability = (varianceNorm + accelerationNorm) / 2.0
-
-	// Apply sensitivity factor to adjust probability
 	probability = probability * sensitivity
 
-	// Ensure probability stays within [0, 1] range
 	if probability < 0.0 {
 		probability = 0.05
 	} else if probability > 1.0 {
 		probability = 1.0
 	}
 
-	// Update the user-specific tracking state
 	userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity = x, y, time, velocity
 
 	return varianceNorm, accelerationNorm, probability
@@ -117,43 +103,41 @@ func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNo
 
 // WebSocketHandler manages new WebSocket connections
 func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
-	// Extract user_id from query parameters
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
 		http.Error(w, "user_id is required", http.StatusUnauthorized)
 		return
 	}
 
-	// Create an upgrader instance (pointer)
 	upgrader := &websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return true // Allow connections from any origin
+			return true
 		},
 	}
 
-	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		http.Error(w, "Failed to upgrade connection", http.StatusInternalServerError)
 		return
 	}
 
-	// Store connection for this user in sync.Map
-	connections.Store(userID, conn)
+	existingConn, loaded := connections.LoadOrStore(userID, conn)
+	if loaded {
+		existingConn.(*websocket.Conn).Close()
+		connections.Store(userID, conn)
+	}
 
-	// Handle the WebSocket connection
 	go handleConnection(conn, userID)
 }
 
-// handleConnection manages WebSocket messages for a specific user
+// handleConnection manages WebSocket messages for a user
 func handleConnection(conn *websocket.Conn, userID string) {
 	defer func() {
-		// Remove the connection when user disconnects
 		connections.Delete(userID)
+		userTracking.Delete(userID)
 		conn.Close()
 	}()
 
-	// Read messages from WebSocket
 	for {
 		messageType, msg, err := conn.ReadMessage()
 		if err != nil {
@@ -161,7 +145,6 @@ func handleConnection(conn *websocket.Conn, userID string) {
 			break
 		}
 
-		// Process gaze data for this user
 		processGazeData(msg, conn, messageType, userID)
 	}
 }
@@ -178,11 +161,9 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int, user
 		return
 	}
 
-	// Set default sensitivity and perform analysis
 	defaultSensitivity := 1.0
 	variance, acceleration, probability := AnalyzeGazeData(userID, gazeData.Time, gazeData.X, gazeData.Y, defaultSensitivity)
 
-	// Prepare the analysis response
 	analysisResponse := struct {
 		Variance     float64 `json:"variance"`
 		Acceleration float64 `json:"acceleration"`
@@ -193,26 +174,21 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int, user
 		Probability:  probability,
 	}
 
-	// Marshal the response into JSON
 	responseJSON, err := json.Marshal(analysisResponse)
 	if err != nil {
 		log.Println("Error marshaling analysis response:", err)
 		return
 	}
 
-	// Create a context with timeout for the WebSocket write operation
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // Timeout after 5 seconds
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Channel to handle the result of the WebSocket write operation
 	errChan := make(chan error)
 
-	// Perform the write operation in a goroutine
 	go func() {
 		errChan <- conn.WriteMessage(messageType, responseJSON)
 	}()
 
-	// Wait for either success or timeout
 	select {
 	case err := <-errChan:
 		if err != nil {
