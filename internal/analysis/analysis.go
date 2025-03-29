@@ -6,11 +6,14 @@ import (
 )
 
 var (
-	lastX, lastY, lastTime, lastVelocity float64
-	mu                                   sync.Mutex
-	// Create a map to hold locks for each user
-	userLocks sync.Map // sync.Map for user-specific locks
+	// userDataMap stores user-specific gaze data
+	userDataMap sync.Map // sync.Map to store user-specific gaze data
 )
+
+// UserData struct holds the tracking data for each user
+type UserData struct {
+	lastX, lastY, lastTime, lastVelocity float64
+}
 
 // ClipAndScale ensures values are clipped and normalized for output
 func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
@@ -21,11 +24,10 @@ func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
 
 // AnalyzeGazeData processes gaze data and computes movement metrics
 // sensitivity is a value between 0.75 and 1.25
-func AnalyzeGazeData(time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
-	// Use a user-specific lock
-	userLock, _ := userLocks.LoadOrStore("user", &sync.Mutex{})
-	userLock.(*sync.Mutex).Lock()
-	defer userLock.(*sync.Mutex).Unlock()
+func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
+	// Get or initialize user data for tracking
+	userDataInterface, _ := userDataMap.LoadOrStore(userID, &UserData{})
+	userData := userDataInterface.(*UserData)
 
 	// Validate sensitivity value (between 0.75 and 1.25). If invalid, use default 1.0
 	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
@@ -33,23 +35,23 @@ func AnalyzeGazeData(time, x, y, sensitivity float64) (varianceNorm, acceleratio
 	}
 
 	// Reset tracking if time goes backward (possible page refresh)
-	if time < lastTime {
-		lastX, lastY, lastTime, lastVelocity = 0, 0, 0, 0
+	if time < userData.lastTime {
+		userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity = 0, 0, 0, 0
 	}
 
 	// Initialize on first valid input
-	if lastTime == 0 {
-		lastX, lastY, lastTime, lastVelocity = x, y, time, 0.0
+	if userData.lastTime == 0 {
+		userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity = x, y, time, 0.0
 		return 0.0, 0.0, 0.05 // Default for first detection
 	}
 
-	dt := time - lastTime
+	dt := time - userData.lastTime
 	if dt <= 0.0 {
 		return 0.0, 0.0, 0.05 // No forward time => return middle prob
 	}
 
-	dx := x - lastX
-	dy := y - lastY
+	dx := x - userData.lastX
+	dy := y - userData.lastY
 	variance := dx*dx + dy*dy
 	velocity := math.Sqrt(variance) / dt
 
@@ -57,7 +59,7 @@ func AnalyzeGazeData(time, x, y, sensitivity float64) (varianceNorm, acceleratio
 	const epsilon = 1e-6
 	acceleration := 0.0
 	if dt > epsilon {
-		acceleration = (velocity - lastVelocity) / dt
+		acceleration = (velocity - userData.lastVelocity) / dt
 	}
 
 	// Use sensitivity to adjust scaling of varianceNorm and accelerationNorm
@@ -72,11 +74,13 @@ func AnalyzeGazeData(time, x, y, sensitivity float64) (varianceNorm, acceleratio
 
 	// Ensure probability stays within [0, 1] range
 	if probability < 0.0 {
-		probability = 0.0
+		probability = 0.05
 	} else if probability > 1.0 {
 		probability = 1.0
 	}
 
-	lastX, lastY, lastTime, lastVelocity = x, y, time, velocity
+	// Update the user-specific tracking state
+	userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity = x, y, time, velocity
+
 	return varianceNorm, accelerationNorm, probability
 }
