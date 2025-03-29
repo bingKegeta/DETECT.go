@@ -8,6 +8,8 @@ import (
 var (
 	lastX, lastY, lastTime, lastVelocity float64
 	mu                                   sync.Mutex
+	// Create a map to hold locks for each user
+	userLocks sync.Map // sync.Map for user-specific locks
 )
 
 // ClipAndScale ensures values are clipped and normalized for output
@@ -20,8 +22,10 @@ func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
 // AnalyzeGazeData processes gaze data and computes movement metrics
 // sensitivity is a value between 0.75 and 1.25
 func AnalyzeGazeData(time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
-	mu.Lock()
-	defer mu.Unlock()
+	// Use a user-specific lock
+	userLock, _ := userLocks.LoadOrStore("user", &sync.Mutex{})
+	userLock.(*sync.Mutex).Lock()
+	defer userLock.(*sync.Mutex).Unlock()
 
 	// Validate sensitivity value (between 0.75 and 1.25). If invalid, use default 1.0
 	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
