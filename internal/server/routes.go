@@ -91,7 +91,7 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int, user
 
 	// Set default sensitivity and perform analysis
 	defaultSensitivity := 1.0
-	variance, acceleration, probability := analysis.AnalyzeGazeData(gazeData.Time, gazeData.X, gazeData.Y, defaultSensitivity)
+	variance, acceleration, probability := analysis.AnalyzeGazeData(userID, gazeData.Time, gazeData.X, gazeData.Y, defaultSensitivity)
 
 	// Prepare the analysis response
 	analysisResponse := struct {
