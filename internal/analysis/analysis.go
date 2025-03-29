@@ -57,11 +57,21 @@ func AnalyzeGazeData(time, x, y, sensitivity float64) (varianceNorm, acceleratio
 	}
 
 	// Use sensitivity to adjust scaling of varianceNorm and accelerationNorm
-	varianceNorm = ClipAndScale(variance, 4.5e-07, 0.00013, 0.01*sensitivity, 0.95*sensitivity)
-	accelerationNorm = ClipAndScale(acceleration, 0.3*sensitivity, 10.0*sensitivity, 0.01*sensitivity, 0.95*sensitivity)
+	varianceNorm = ClipAndScale(variance, 4.5e-07, 0.00013, 0.01, 0.95)
+	accelerationNorm = ClipAndScale(acceleration, 0.3, 10.0, 0.01, 0.95)
 
 	// Calculate probability as average of normalized variance and acceleration
 	probability = (varianceNorm + accelerationNorm) / 2.0
+
+	// Apply sensitivity factor to adjust probability
+	probability = probability * sensitivity
+
+	// Ensure probability stays within [0, 1] range
+	if probability < 0.0 {
+		probability = 0.0
+	} else if probability > 1.0 {
+		probability = 1.0
+	}
 
 	lastX, lastY, lastTime, lastVelocity = x, y, time, velocity
 	return varianceNorm, accelerationNorm, probability
