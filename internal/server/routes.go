@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -31,6 +30,7 @@ var (
 
 // UserData struct holds the tracking data for each user
 type UserData struct {
+	sync.Mutex // Ensure thread-safe access
 	lastX, lastY float64
 	lastTime     float64
 	lastVelocity float64
@@ -47,6 +47,9 @@ func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
 func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
 	userDataInterface, _ := userTracking.LoadOrStore(userID, &UserData{})
 	userData := userDataInterface.(*UserData)
+
+	userData.Lock()   // Lock user data to prevent race conditions
+	defer userData.Unlock()
 
 	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
 		sensitivity = 1.0
@@ -120,9 +123,15 @@ func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 	// Allow multiple connections per user
 	conns, _ := connections.LoadOrStore(userID, &sync.Map{})
 	userConns := conns.(*sync.Map)
-	userConns.Store(conn, struct{}{})
+	userConns.Store(conn, &WebSocketConnection{conn: conn})
 
 	go handleConnection(conn, userID)
+}
+
+// WebSocketConnection structure includes WebSocket connection and mutex for thread-safe writing
+type WebSocketConnection struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
 }
 
 // handleConnection manages WebSocket messages for a user
@@ -187,25 +196,16 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int, user
 		userConns := conns.(*sync.Map)
 
 		userConns.Range(func(key, value interface{}) bool {
-			wsConn := key.(*websocket.Conn)
-			go func(c *websocket.Conn) {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-
-				errChan := make(chan error, 1)
-				go func() {
-					errChan <- c.WriteMessage(messageType, responseJSON)
-				}()
-
-				select {
-				case err := <-errChan:
-					if err != nil {
-						log.Printf("Error sending message to user %s: %v", userID, err)
-						c.Close()
-						userConns.Delete(c) // Remove broken connection
-					}
-				case <-ctx.Done():
-					log.Println("Timeout reached while sending message")
+			wsConn := key.(*WebSocketConnection)
+			go func(c *WebSocketConnection) {
+				c.mu.Lock()   // Lock WebSocket for writing
+				defer c.mu.Unlock()
+				
+				err := c.conn.WriteMessage(messageType, responseJSON)
+				if err != nil {
+					log.Printf("Error sending message to user %s: %v", userID, err)
+					c.conn.Close()
+					userConns.Delete(c) // Remove broken connection
 				}
 			}(wsConn)
 
