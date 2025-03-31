@@ -152,7 +152,6 @@ func handleConnection(conn *websocket.Conn, userID string) {
 	}
 }
 
-// processGazeData handles gaze data analysis for each user
 func processGazeData(message []byte, conn *websocket.Conn, messageType int, userID string) {
 	var gazeData struct {
 		Time float64 `json:"time"`
@@ -183,22 +182,35 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int, user
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	// Broadcast to all active WebSocket connections for the user
+	if conns, ok := connections.Load(userID); ok {
+		userConns := conns.(*sync.Map)
 
-	errChan := make(chan error, 1)
+		userConns.Range(func(key, value interface{}) bool {
+			wsConn := key.(*websocket.Conn)
+			go func(c *websocket.Conn) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
 
-	go func() {
-		errChan <- conn.WriteMessage(messageType, responseJSON)
-	}()
+				errChan := make(chan error, 1)
+				go func() {
+					errChan <- c.WriteMessage(messageType, responseJSON)
+				}()
 
-	select {
-	case err := <-errChan:
-		if err != nil {
-			log.Printf("Error sending message: %v", err)
-		}
-	case <-ctx.Done():
-		log.Println("Timeout reached while sending message")
+				select {
+				case err := <-errChan:
+					if err != nil {
+						log.Printf("Error sending message to user %s: %v", userID, err)
+						c.Close()
+						userConns.Delete(c) // Remove broken connection
+					}
+				case <-ctx.Done():
+					log.Println("Timeout reached while sending message")
+				}
+			}(wsConn)
+
+			return true // Continue iteration
+		})
 	}
 }
 
