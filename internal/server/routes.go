@@ -30,7 +30,7 @@ var (
 
 // UserData struct holds the tracking data for each user
 type UserData struct {
-	sync.Mutex // Ensure thread-safe access
+	sync.Mutex
 	lastX, lastY float64
 	lastTime     float64
 	lastVelocity float64
@@ -45,11 +45,16 @@ func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
 
 // AnalyzeGazeData processes gaze data and computes movement metrics
 func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
+	log.Printf("Analyzing gaze data for user %s: time=%f, x=%f, y=%f, sensitivity=%f", userID, time, x, y, sensitivity)
+
 	userDataInterface, _ := userTracking.LoadOrStore(userID, &UserData{})
 	userData := userDataInterface.(*UserData)
 
-	userData.Lock()   // Lock user data to prevent race conditions
+	userData.Lock()
 	defer userData.Unlock()
+
+	log.Printf("User %s previous state: lastX=%f, lastY=%f, lastTime=%f, lastVelocity=%f",
+		userID, userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity)
 
 	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
 		sensitivity = 1.0
@@ -58,17 +63,20 @@ func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNo
 	if userData.lastTime == 0 {
 		if time > 0 {
 			userData.lastX, userData.lastY, userData.lastTime = x, y, time
+			log.Printf("User %s initialized tracking", userID)
 			return 0.0, 0.0, 0.05
 		}
 	}
 
 	if time < userData.lastTime {
+		log.Printf("User %s time inconsistency detected (time=%f, lastTime=%f). Resetting data.", userID, time, userData.lastTime)
 		userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity = 0, 0, 0, 0
 		return 0.0, 0.0, 0.05
 	}
 
 	dt := time - userData.lastTime
 	if dt <= 0.0 {
+		log.Printf("User %s received invalid dt=%f. Returning base probability.", userID, dt)
 		return 0.0, 0.0, 0.05
 	}
 
@@ -86,8 +94,7 @@ func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNo
 	varianceNorm = ClipAndScale(variance, 4.5e-07, 0.00013, 0.01, 0.95)
 	accelerationNorm = ClipAndScale(acceleration, 0.3, 10.0, 0.01, 0.95)
 
-	probability = (varianceNorm + accelerationNorm) / 2.0
-	probability = probability * sensitivity
+	probability = (varianceNorm + accelerationNorm) / 2.0 * sensitivity
 
 	if probability < 0.0 {
 		probability = 0.05
@@ -96,6 +103,8 @@ func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNo
 	}
 
 	userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity = x, y, time, velocity
+
+	log.Printf("User %s computed: varianceNorm=%f, accelerationNorm=%f, probability=%f", userID, varianceNorm, accelerationNorm, probability)
 
 	return varianceNorm, accelerationNorm, probability
 }
@@ -116,14 +125,16 @@ func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		log.Printf("Failed to upgrade WebSocket connection for user %s: %v", userID, err)
 		http.Error(w, "Failed to upgrade connection", http.StatusInternalServerError)
 		return
 	}
 
-	// Allow multiple connections per user
 	conns, _ := connections.LoadOrStore(userID, &sync.Map{})
 	userConns := conns.(*sync.Map)
 	userConns.Store(conn, &WebSocketConnection{conn: conn})
+
+	log.Printf("User %s connected. Total connections: %d", userID, userMapSize(userConns))
 
 	go handleConnection(conn, userID)
 }
@@ -143,9 +154,11 @@ func handleConnection(conn *websocket.Conn, userID string) {
 			if userMapSize(userConns) == 0 {
 				connections.Delete(userID)
 				userTracking.Delete(userID)
+				log.Printf("User %s fully disconnected, cleaning up state.", userID)
 			}
 		}
 		conn.Close()
+		log.Printf("User %s WebSocket closed", userID)
 	}()
 
 	for {
@@ -155,9 +168,7 @@ func handleConnection(conn *websocket.Conn, userID string) {
 			break
 		}
 
-		go func() {
-			processGazeData(msg, conn, messageType, userID)
-		}()
+		go processGazeData(msg, conn, messageType, userID)
 	}
 }
 
@@ -168,9 +179,11 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int, user
 		Y    float64 `json:"y"`
 	}
 	if err := json.Unmarshal(message, &gazeData); err != nil {
-		log.Println("Error parsing WebSocket message:", err)
+		log.Printf("User %s: Error parsing WebSocket message: %v", userID, err)
 		return
 	}
+
+	log.Printf("User %s: Received gaze data: time=%f, x=%f, y=%f", userID, gazeData.Time, gazeData.X, gazeData.Y)
 
 	defaultSensitivity := 1.0
 	variance, acceleration, probability := AnalyzeGazeData(userID, gazeData.Time, gazeData.X, gazeData.Y, defaultSensitivity)
@@ -187,7 +200,7 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int, user
 
 	responseJSON, err := json.Marshal(analysisResponse)
 	if err != nil {
-		log.Println("Error marshaling analysis response:", err)
+		log.Printf("User %s: Error marshaling analysis response: %v", userID, err)
 		return
 	}
 
@@ -198,18 +211,18 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int, user
 		userConns.Range(func(key, value interface{}) bool {
 			wsConn := key.(*WebSocketConnection)
 			go func(c *WebSocketConnection) {
-				c.mu.Lock()   // Lock WebSocket for writing
+				c.mu.Lock()
 				defer c.mu.Unlock()
-				
+
 				err := c.conn.WriteMessage(messageType, responseJSON)
 				if err != nil {
-					log.Printf("Error sending message to user %s: %v", userID, err)
+					log.Printf("User %s: Error sending message: %v", userID, err)
 					c.conn.Close()
-					userConns.Delete(c) // Remove broken connection
+					userConns.Delete(c)
 				}
 			}(wsConn)
 
-			return true // Continue iteration
+			return true
 		})
 	}
 }
