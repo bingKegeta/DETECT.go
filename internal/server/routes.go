@@ -31,7 +31,6 @@ var (
 
 // UserData struct holds the tracking data for each user
 type UserData struct {
-	mu           sync.Mutex
 	lastX, lastY float64
 	lastTime     float64
 	lastVelocity float64
@@ -48,9 +47,6 @@ func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
 func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
 	userDataInterface, _ := userTracking.LoadOrStore(userID, &UserData{})
 	userData := userDataInterface.(*UserData)
-
-	userData.mu.Lock()
-	defer userData.mu.Unlock()
 
 	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
 		sensitivity = 1.0
@@ -121,11 +117,10 @@ func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existingConn, loaded := connections.LoadOrStore(userID, conn)
-	if loaded {
-		existingConn.(*websocket.Conn).Close()
-		connections.Store(userID, conn)
-	}
+	// Allow multiple connections per user
+	conns, _ := connections.LoadOrStore(userID, &sync.Map{})
+	userConns := conns.(*sync.Map)
+	userConns.Store(conn, struct{}{})
 
 	go handleConnection(conn, userID)
 }
@@ -133,8 +128,14 @@ func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 // handleConnection manages WebSocket messages for a user
 func handleConnection(conn *websocket.Conn, userID string) {
 	defer func() {
-		connections.Delete(userID)
-		userTracking.Delete(userID)
+		if conns, ok := connections.Load(userID); ok {
+			userConns := conns.(*sync.Map)
+			userConns.Delete(conn)
+			if userMapSize(userConns) == 0 {
+				connections.Delete(userID)
+				userTracking.Delete(userID)
+			}
+		}
 		conn.Close()
 	}()
 
@@ -145,7 +146,9 @@ func handleConnection(conn *websocket.Conn, userID string) {
 			break
 		}
 
-		go processGazeData(msg, conn, messageType, userID)
+		go func() {
+			processGazeData(msg, conn, messageType, userID)
+		}()
 	}
 }
 
@@ -183,7 +186,7 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int, user
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	errChan := make(chan error)
+	errChan := make(chan error, 1)
 
 	go func() {
 		errChan <- conn.WriteMessage(messageType, responseJSON)
@@ -197,6 +200,16 @@ func processGazeData(message []byte, conn *websocket.Conn, messageType int, user
 	case <-ctx.Done():
 		log.Println("Timeout reached while sending message")
 	}
+}
+
+// userMapSize returns the number of active WebSocket connections for a user
+func userMapSize(m *sync.Map) int {
+	count := 0
+	m.Range(func(_, _ interface{}) bool {
+		count++
+		return true
+	})
+	return count
 }
 
 func (s *Server) RegisterRoutes() http.Handler {
