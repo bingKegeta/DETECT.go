@@ -31,14 +31,52 @@ const (
 	pingPeriod            = (pongWait * 9) / 10
 )
 
-var (
-	jwtSecret       []byte
-	userTracking    sync.Map
-	connections     sync.Map
-	connectionCount sync.Map
-	globalLimiter   = rate.NewLimiter(messageRateLimit, burstLimit)
-)
+// UserTracker manages all user-specific tracking data
+type UserTracker struct {
+	mu    sync.Mutex
+	users map[string]*UserData
+}
 
+// NewUserTracker creates a new thread-safe user tracker
+func NewUserTracker() *UserTracker {
+	return &UserTracker{
+		users: make(map[string]*UserData),
+	}
+}
+
+// GetUserData safely retrieves or creates user data
+func (ut *UserTracker) GetUserData(userID string) *UserData {
+	ut.mu.Lock()
+	defer ut.mu.Unlock()
+
+	if data, exists := ut.users[userID]; exists {
+		return data
+	}
+
+	data := &UserData{
+		initialized: false,
+	}
+	ut.users[userID] = data
+	return data
+}
+
+// RemoveUser safely removes user data
+func (ut *UserTracker) RemoveUser(userID string) {
+	ut.mu.Lock()
+	defer ut.mu.Unlock()
+	delete(ut.users, userID)
+}
+
+// UserData holds tracking data for a single user
+type UserData struct {
+	sync.Mutex
+	lastX, lastY float64
+	lastTime     float64
+	lastVelocity float64
+	initialized  bool
+}
+
+// WebSocketConnection structure
 type WebSocketConnection struct {
 	conn      *websocket.Conn
 	mu        sync.Mutex
@@ -48,15 +86,7 @@ type WebSocketConnection struct {
 	createdAt time.Time
 }
 
-// UserData struct holds the tracking data for each user
-type UserData struct {
-    sync.Mutex
-    lastX, lastY     float64
-    lastTime         float64
-    lastVelocity     float64
-    initialized      bool
-}
-
+// Metrics structure for monitoring
 type Metrics struct {
 	TotalConnections  int
 	ActiveUsers       int
@@ -64,8 +94,13 @@ type Metrics struct {
 }
 
 var (
-	metrics      Metrics
-	metricsMutex sync.Mutex
+	userTracker     = NewUserTracker()
+	connections     sync.Map // Stores WebSocket connections per user
+	connectionCount sync.Map // Stores connection counts per user
+	metrics         Metrics
+	metricsMutex    sync.Mutex
+	globalLimiter   = rate.NewLimiter(messageRateLimit, burstLimit)
+	jwtSecret       = []byte(os.Getenv("JWT_SECRET"))
 )
 
 func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +217,7 @@ func (c *WebSocketConnection) closeConnection() {
 
 		if userMapSize(userConns) == 0 {
 			connections.Delete(c.userID)
-			userTracking.Delete(c.userID)
+			userTracker.RemoveUser(c.userID)
 			log.Printf("User %s fully disconnected, cleaning up state.", c.userID)
 		}
 	}
@@ -224,14 +259,7 @@ func processGazeData(message []byte, userID string, messageType int, sender *Web
 		return
 	}
 
-	log.Printf("User %s: Received gaze data: time=%f, x=%f, y=%f", userID, gazeData.Time, gazeData.X, gazeData.Y)
-
-	sensitivity := gazeData.Sensitivity
-	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
-		sensitivity = 1.0
-	}
-
-	variance, acceleration, probability := AnalyzeGazeData(userID, gazeData.Time, gazeData.X, gazeData.Y, sensitivity)
+	variance, acceleration, probability := AnalyzeGazeData(userID, gazeData.Time, gazeData.X, gazeData.Y, gazeData.Sensitivity)
 
 	analysisResponse := struct {
 		Variance     float64 `json:"variance"`
@@ -284,83 +312,63 @@ func processGazeData(message []byte, userID string, messageType int, sender *Web
 	}
 }
 
-// AnalyzeGazeData processes gaze data with proper user isolation
-func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
-    log.Printf("Analyzing gaze data for user %s: time=%f, x=%f, y=%f, sensitivity=%f", userID, time, x, y, sensitivity)
+func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (float64, float64, float64) {
+	userData := userTracker.GetUserData(userID)
+	userData.Lock()
+	defer userData.Unlock()
 
-    // Ensure we get a fresh UserData for each user
-    userDataInterface, _ := userTracking.LoadOrStore(userID, &UserData{})
-    userData := userDataInterface.(*UserData)
+	log.Printf("Processing user %s (initialized: %v)", userID, userData.initialized)
 
-    userData.Lock()
-    defer userData.Unlock()
+	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
+		sensitivity = 1.0
+	}
 
-    log.Printf("User %s previous state: initialized=%t, lastX=%f, lastY=%f, lastTime=%f, lastVelocity=%f",
-        userID, userData.initialized, userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity)
+	if !userData.initialized {
+		if time > 0 {
+			userData.lastX = x
+			userData.lastY = y
+			userData.lastTime = time
+			userData.initialized = true
+			log.Printf("Initialized tracking for user %s", userID)
+			return 0.0, 0.0, 0.05
+		}
+		return 0.0, 0.0, 0.05
+	}
 
-    // Validate sensitivity
-    if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
-        sensitivity = 1.0
-    }
+	if time < userData.lastTime {
+		log.Printf("Time inconsistency for user %s. Resetting.", userID)
+		userData.initialized = false
+		return 0.0, 0.0, 0.05
+	}
 
-    // First-time initialization
-    if !userData.initialized {
-        if time > 0 {
-            userData.lastX = x
-            userData.lastY = y
-            userData.lastTime = time
-            userData.initialized = true
-            log.Printf("User %s initialized tracking", userID)
-            return 0.0, 0.0, 0.05
-        }
-        return 0.0, 0.0, 0.05
-    }
+	dt := time - userData.lastTime
+	if dt <= 0 {
+		log.Printf("Invalid dt for user %s", userID)
+		return 0.0, 0.0, 0.05
+	}
 
-    // Check for time inconsistencies
-    if time < userData.lastTime {
-        log.Printf("User %s time inconsistency detected (time=%f, lastTime=%f). Resetting data.", userID, time, userData.lastTime)
-        userData.lastX = 0
-        userData.lastY = 0
-        userData.lastTime = 0
-        userData.lastVelocity = 0
-        userData.initialized = false
-        return 0.0, 0.0, 0.05
-    }
+	dx := x - userData.lastX
+	dy := y - userData.lastY
+	distance := math.Sqrt(dx*dx + dy*dy)
+	velocity := distance / dt
+	acceleration := 0.0
+	if dt > 1e-6 {
+		acceleration = (velocity - userData.lastVelocity) / dt
+	}
 
-    dt := time - userData.lastTime
-    if dt <= 0.0 {
-        log.Printf("User %s received invalid dt=%f. Returning base probability.", userID, dt)
-        return 0.0, 0.0, 0.05
-    }
+	varianceNorm := ClipAndScale(distance*distance, 4.5e-7, 0.00013, 0.01, 0.95)
+	accelNorm := ClipAndScale(acceleration, 0.3, 10.0, 0.01, 0.95)
+	probability := math.Max(0.05, math.Min(1.0, (varianceNorm+accelNorm)/2.0*sensitivity))
 
-    dx := x - userData.lastX
-    dy := y - userData.lastY
-    variance := dx*dx + dy*dy
-    velocity := math.Sqrt(variance) / dt
+	userData.lastX = x
+	userData.lastY = y
+	userData.lastTime = time
+	userData.lastVelocity = velocity
 
-    const epsilon = 1e-6
-    acceleration := 0.0
-    if dt > epsilon {
-        acceleration = (velocity - userData.lastVelocity) / dt
-    }
+	log.Printf("User %s - Variance: %.4f, Accel: %.4f, Prob: %.4f",
+		userID, varianceNorm, accelNorm, probability)
 
-    varianceNorm = ClipAndScale(variance, 4.5e-07, 0.00013, 0.01, 0.95)
-    accelerationNorm = ClipAndScale(acceleration, 0.3, 10.0, 0.01, 0.95)
-
-    probability = (varianceNorm + accelerationNorm) / 2.0 * sensitivity
-
-    // Clamp probability between 0.05 and 1.0
-    probability = math.Max(0.05, math.Min(1.0, probability))
-
-    // Update state
-    userData.lastX = x
-    userData.lastY = y
-    userData.lastTime = time
-    userData.lastVelocity = velocity
-
-    log.Printf("User %s computed: varianceNorm=%f, accelerationNorm=%f, probability=%f", userID, varianceNorm, accelerationNorm, probability)
-
-    return varianceNorm, accelerationNorm, probability
+	return varianceNorm, accelNorm, probability
 }
 
 func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
