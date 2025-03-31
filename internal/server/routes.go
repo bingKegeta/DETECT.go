@@ -1,4 +1,3 @@
-
 package server
 
 import (
@@ -20,16 +19,35 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/markbates/goth/gothic"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/time/rate"
 )
 
-var jwtSecret []byte
+const (
+	maxConnectionsPerUser = 5
+	messageRateLimit      = 100
+	burstLimit            = 20
+	writeWait             = 10 * time.Second
+	pongWait              = 60 * time.Second
+	pingPeriod            = (pongWait * 9) / 10
+)
 
 var (
-	userTracking sync.Map // Stores tracking data per user
-	connections  sync.Map // Stores WebSocket connections per user
+	jwtSecret       []byte
+	userTracking    sync.Map
+	connections     sync.Map
+	connectionCount sync.Map
+	globalLimiter   = rate.NewLimiter(messageRateLimit, burstLimit)
 )
 
-// UserData struct holds the tracking data for each user
+type WebSocketConnection struct {
+	conn      *websocket.Conn
+	mu        sync.Mutex
+	done      chan struct{}
+	limiter   *rate.Limiter
+	userID    string
+	createdAt time.Time
+}
+
 type UserData struct {
 	sync.Mutex
 	lastX, lastY float64
@@ -37,14 +55,233 @@ type UserData struct {
 	lastVelocity float64
 }
 
-// ClipAndScale ensures values are clipped and normalized for output
-func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
-	valAbs := math.Abs(value)
-	clipped := math.Min(math.Max(valAbs, min), max)
-	return scaleMin + (scaleMax-scaleMin)*(clipped/max)
+type Metrics struct {
+	TotalConnections  int
+	ActiveUsers       int
+	MessagesProcessed int64
 }
 
-// AnalyzeGazeData processes gaze data and computes movement metrics
+var (
+	metrics      Metrics
+	metricsMutex sync.Mutex
+)
+
+func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, "user_id is required", http.StatusUnauthorized)
+		return
+	}
+
+	if count, ok := connectionCount.Load(userID); ok && count.(int) >= maxConnectionsPerUser {
+		http.Error(w, "maximum connections reached", http.StatusTooManyRequests)
+		return
+	}
+
+	upgrader := &websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+		HandshakeTimeout: 5 * time.Second,
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Failed to upgrade WebSocket connection for user %s: %v", userID, err)
+		http.Error(w, "Failed to upgrade connection", http.StatusInternalServerError)
+		return
+	}
+
+	wsConn := &WebSocketConnection{
+		conn:      conn,
+		done:      make(chan struct{}),
+		limiter:   rate.NewLimiter(messageRateLimit, burstLimit),
+		userID:    userID,
+		createdAt: time.Now(),
+	}
+
+	conns, _ := connections.LoadOrStore(userID, &sync.Map{})
+	userConns := conns.(*sync.Map)
+	userConns.Store(wsConn, struct{}{})
+
+	updateConnectionCount(userID, 1)
+	updateMetrics(1, 0)
+
+	log.Printf("User %s connected. Total connections: %d", userID, userMapSize(userConns))
+
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
+	go wsConn.writePump()
+	go wsConn.readPump()
+}
+
+func (c *WebSocketConnection) readPump() {
+	defer c.closeConnection()
+
+	for {
+		select {
+		case <-c.done:
+			return
+		default:
+			messageType, msg, err := c.conn.ReadMessage()
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Printf("User %s unexpected disconnect: %v", c.userID, err)
+				}
+				return
+			}
+
+			if !c.limiter.Allow() {
+				log.Printf("User %s exceeded rate limit", c.userID)
+				c.sendError("rate limit exceeded")
+				continue
+			}
+
+			go processGazeData(msg, c.userID, messageType, c)
+		}
+	}
+}
+
+func (c *WebSocketConnection) writePump() {
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.closeConnection()
+	}()
+
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			if err := c.conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(writeWait)); err != nil {
+				log.Printf("User %s ping failed: %v", c.userID, err)
+				c.mu.Unlock()
+				return
+			}
+			c.mu.Unlock()
+		}
+	}
+}
+
+func (c *WebSocketConnection) closeConnection() {
+	close(c.done)
+
+	if conns, ok := connections.Load(c.userID); ok {
+		userConns := conns.(*sync.Map)
+		userConns.Delete(c)
+
+		updateConnectionCount(c.userID, -1)
+
+		if userMapSize(userConns) == 0 {
+			connections.Delete(c.userID)
+			userTracking.Delete(c.userID)
+			log.Printf("User %s fully disconnected, cleaning up state.", c.userID)
+		}
+	}
+
+	updateMetrics(-1, 0)
+	c.conn.Close()
+	log.Printf("User %s WebSocket closed (duration: %v)", c.userID, time.Since(c.createdAt))
+}
+
+func (c *WebSocketConnection) sendError(message string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	errMsg := struct {
+		Error string `json:"error"`
+	}{
+		Error: message,
+	}
+
+	msg, _ := json.Marshal(errMsg)
+	c.conn.WriteMessage(websocket.TextMessage, msg)
+}
+
+func processGazeData(message []byte, userID string, messageType int, sender *WebSocketConnection) {
+	if !globalLimiter.Allow() {
+		log.Printf("Global rate limit exceeded for user %s", userID)
+		return
+	}
+
+	var gazeData struct {
+		Time        float64 `json:"time"`
+		X           float64 `json:"x"`
+		Y           float64 `json:"y"`
+		Sensitivity float64 `json:"sensitivity,omitempty"`
+	}
+
+	if err := json.Unmarshal(message, &gazeData); err != nil {
+		log.Printf("User %s: Error parsing WebSocket message: %v", userID, err)
+		return
+	}
+
+	log.Printf("User %s: Received gaze data: time=%f, x=%f, y=%f", userID, gazeData.Time, gazeData.X, gazeData.Y)
+
+	sensitivity := gazeData.Sensitivity
+	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
+		sensitivity = 1.0
+	}
+
+	variance, acceleration, probability := AnalyzeGazeData(userID, gazeData.Time, gazeData.X, gazeData.Y, sensitivity)
+
+	analysisResponse := struct {
+		Variance     float64 `json:"variance"`
+		Acceleration float64 `json:"acceleration"`
+		Probability  float64 `json:"probability"`
+		Timestamp    int64   `json:"timestamp"`
+	}{
+		Variance:     variance,
+		Acceleration: acceleration,
+		Probability:  probability,
+		Timestamp:    time.Now().UnixMilli(),
+	}
+
+	responseJSON, err := json.Marshal(analysisResponse)
+	if err != nil {
+		log.Printf("User %s: Error marshaling analysis response: %v", userID, err)
+		return
+	}
+
+	updateMetrics(0, 1)
+
+	if conns, ok := connections.Load(userID); ok {
+		userConns := conns.(*sync.Map)
+
+		userConns.Range(func(key, value interface{}) bool {
+			wsConn := key.(*WebSocketConnection)
+
+			if wsConn == sender {
+				return true
+			}
+
+			select {
+			case <-wsConn.done:
+				return true
+			default:
+				wsConn.mu.Lock()
+				defer wsConn.mu.Unlock()
+
+				wsConn.conn.SetWriteDeadline(time.Now().Add(writeWait))
+				if err := wsConn.conn.WriteMessage(messageType, responseJSON); err != nil {
+					log.Printf("User %s: Error sending message: %v", userID, err)
+					wsConn.conn.Close()
+					userConns.Delete(wsConn)
+					updateConnectionCount(userID, -1)
+					updateMetrics(-1, 0)
+				}
+				return true
+			}
+		})
+	}
+}
+
 func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNorm, accelerationNorm, probability float64) {
 	log.Printf("Analyzing gaze data for user %s: time=%f, x=%f, y=%f, sensitivity=%f", userID, time, x, y, sensitivity)
 
@@ -56,10 +293,6 @@ func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNo
 
 	log.Printf("User %s previous state: lastX=%f, lastY=%f, lastTime=%f, lastVelocity=%f",
 		userID, userData.lastX, userData.lastY, userData.lastTime, userData.lastVelocity)
-
-	if sensitivity < 0.75 || sensitivity > 1.25 || math.IsNaN(sensitivity) || math.IsInf(sensitivity, 0) {
-		sensitivity = 1.0
-	}
 
 	if userData.lastTime == 0 {
 		if time > 0 {
@@ -110,125 +343,12 @@ func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (varianceNo
 	return varianceNorm, accelerationNorm, probability
 }
 
-// WebSocketHandler manages new WebSocket connections
-func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		http.Error(w, "user_id is required", http.StatusUnauthorized)
-		return
-	}
-
-	upgrader := &websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("Failed to upgrade WebSocket connection for user %s: %v", userID, err)
-		http.Error(w, "Failed to upgrade connection", http.StatusInternalServerError)
-		return
-	}
-
-	conns, _ := connections.LoadOrStore(userID, &sync.Map{})
-	userConns := conns.(*sync.Map)
-	userConns.Store(conn, &WebSocketConnection{conn: conn})
-
-	log.Printf("User %s connected. Total connections: %d", userID, userMapSize(userConns))
-
-	go handleConnection(conn, userID)
+func ClipAndScale(value, min, max, scaleMin, scaleMax float64) float64 {
+	valAbs := math.Abs(value)
+	clipped := math.Min(math.Max(valAbs, min), max)
+	return scaleMin + (scaleMax-scaleMin)*(clipped/max)
 }
 
-// WebSocketConnection structure includes WebSocket connection and mutex for thread-safe writing
-type WebSocketConnection struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
-}
-
-// handleConnection manages WebSocket messages for a user
-func handleConnection(conn *websocket.Conn, userID string) {
-	defer func() {
-		if conns, ok := connections.Load(userID); ok {
-			userConns := conns.(*sync.Map)
-			userConns.Delete(conn)
-			if userMapSize(userConns) == 0 {
-				connections.Delete(userID)
-				userTracking.Delete(userID)
-				log.Printf("User %s fully disconnected, cleaning up state.", userID)
-			}
-		}
-		conn.Close()
-		log.Printf("User %s WebSocket closed", userID)
-	}()
-
-	for {
-		messageType, msg, err := conn.ReadMessage()
-		if err != nil {
-			log.Printf("User %s disconnected: %v", userID, err)
-			break
-		}
-
-		go processGazeData(msg, conn, messageType, userID)
-	}
-}
-
-func processGazeData(message []byte, conn *websocket.Conn, messageType int, userID string) {
-	var gazeData struct {
-		Time float64 `json:"time"`
-		X    float64 `json:"x"`
-		Y    float64 `json:"y"`
-	}
-	if err := json.Unmarshal(message, &gazeData); err != nil {
-		log.Printf("User %s: Error parsing WebSocket message: %v", userID, err)
-		return
-	}
-
-	log.Printf("User %s: Received gaze data: time=%f, x=%f, y=%f", userID, gazeData.Time, gazeData.X, gazeData.Y)
-
-	defaultSensitivity := 1.0
-	variance, acceleration, probability := AnalyzeGazeData(userID, gazeData.Time, gazeData.X, gazeData.Y, defaultSensitivity)
-
-	analysisResponse := struct {
-		Variance     float64 `json:"variance"`
-		Acceleration float64 `json:"acceleration"`
-		Probability  float64 `json:"probability"`
-	}{
-		Variance:     variance,
-		Acceleration: acceleration,
-		Probability:  probability,
-	}
-
-	responseJSON, err := json.Marshal(analysisResponse)
-	if err != nil {
-		log.Printf("User %s: Error marshaling analysis response: %v", userID, err)
-		return
-	}
-
-	// Broadcast to all active WebSocket connections for the user
-	if conns, ok := connections.Load(userID); ok {
-		userConns := conns.(*sync.Map)
-
-		userConns.Range(func(key, value interface{}) bool {
-			wsConn := key.(*WebSocketConnection)
-			go func(c *WebSocketConnection) {
-				c.mu.Lock()
-				defer c.mu.Unlock()
-
-				err := c.conn.WriteMessage(messageType, responseJSON)
-				if err != nil {
-					log.Printf("User %s: Error sending message: %v", userID, err)
-					c.conn.Close()
-					userConns.Delete(c)
-				}
-			}(wsConn)
-
-			return true
-		})
-	}
-}
-
-// userMapSize returns the number of active WebSocket connections for a user
 func userMapSize(m *sync.Map) int {
 	count := 0
 	m.Range(func(_, _ interface{}) bool {
@@ -236,6 +356,45 @@ func userMapSize(m *sync.Map) int {
 		return true
 	})
 	return count
+}
+
+func updateConnectionCount(userID string, delta int) {
+	count, _ := connectionCount.LoadOrStore(userID, 0)
+	newCount := count.(int) + delta
+	if newCount <= 0 {
+		connectionCount.Delete(userID)
+	} else {
+		connectionCount.Store(userID, newCount)
+	}
+}
+
+func updateMetrics(connDelta int, msgDelta int64) {
+	metricsMutex.Lock()
+	defer metricsMutex.Unlock()
+
+	metrics.TotalConnections += connDelta
+	if connDelta > 0 {
+		metrics.ActiveUsers = len(getActiveUsers())
+	} else if connDelta < 0 {
+		metrics.ActiveUsers = len(getActiveUsers())
+	}
+	metrics.MessagesProcessed += msgDelta
+}
+
+func getActiveUsers() []string {
+	var users []string
+	connections.Range(func(key, value interface{}) bool {
+		users = append(users, key.(string))
+		return true
+	})
+	return users
+}
+
+func MetricsHandler(w http.ResponseWriter, r *http.Request) {
+	metricsMutex.Lock()
+	defer metricsMutex.Unlock()
+
+	json.NewEncoder(w).Encode(metrics)
 }
 
 func (s *Server) RegisterRoutes() http.Handler {
