@@ -28,6 +28,20 @@ var (
 	connections  sync.Map // Stores WebSocket connections per user
 )
 
+func init() {
+	// Open a log file for writing
+	logFile, err := os.OpenFile("websocket.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("Error opening log file: %v", err)
+	}
+
+	// Set the log output to the file
+	log.SetOutput(logFile)
+
+	// Optionally, log timestamp format (already set by default)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+}
+
 // UserData struct holds the tracking data for each user
 type UserData struct {
 	sync.Mutex
