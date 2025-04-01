@@ -252,6 +252,8 @@ func processGazeData(message []byte, userID string, messageType int, sender *Web
 		X           float64 `json:"x"`
 		Y           float64 `json:"y"`
 		Sensitivity float64 `json:"sensitivity,omitempty"`
+		accMax      float64 `json:"acceleration,omitempty"`
+		varMax      float64 `json:"variance,omitempty"`
 	}
 
 	if err := json.Unmarshal(message, &gazeData); err != nil {
@@ -259,7 +261,7 @@ func processGazeData(message []byte, userID string, messageType int, sender *Web
 		return
 	}
 
-	variance, acceleration, probability := AnalyzeGazeData(userID, gazeData.Time, gazeData.X, gazeData.Y, gazeData.Sensitivity)
+	variance, acceleration, probability := AnalyzeGazeData(userID, gazeData.Time, gazeData.X, gazeData.Y, gazeData.Sensitivity, gazeData.accMax, gazeData.varMax)
 
 	analysisResponse := struct {
 		Variance     float64 `json:"variance"`
@@ -312,7 +314,7 @@ func processGazeData(message []byte, userID string, messageType int, sender *Web
 	}
 }
 
-func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (float64, float64, float64) {
+func AnalyzeGazeData(userID string, time, x, y, sensitivity float64, accMax, varMax float64) (float64, float64, float64) {
 	userData := userTracker.GetUserData(userID)
 	userData.Lock()
 	defer userData.Unlock()
@@ -356,8 +358,8 @@ func AnalyzeGazeData(userID string, time, x, y, sensitivity float64) (float64, f
 		acceleration = (velocity - userData.lastVelocity) / dt
 	}
 
-	varianceNorm := ClipAndScale(distance*distance, 4.5e-7, 0.00013, 0.01, 0.95)
-	accelNorm := ClipAndScale(acceleration, 0.3, 10.0, 0.01, 0.95)
+	varianceNorm := ClipAndScale(distance*distance, 4.5e-7, varMax, 0.01, 0.95)
+	accelNorm := ClipAndScale(acceleration, 0.3, accMax, 0.01, 0.95)
 	probability := math.Max(0.05, math.Min(1.0, (varianceNorm+accelNorm)/2.0*sensitivity))
 
 	userData.lastX = x
