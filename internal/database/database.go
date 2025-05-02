@@ -98,8 +98,8 @@ func New() Service {
         host := os.Getenv("DB_HOST")
         port := os.Getenv("DB_PORT")
         database := os.Getenv("DB_DATABASE")
-        connStr = fmt.Sprintf("postgres://%s:%s@%s:%s/%s",
-            username, password, host, port, database)
+        connStr = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=require",
+    host, port, username, password, database)
     }
 		
 	db, err := sql.Open("pgx", connStr)
